@@ -1,0 +1,2307 @@
+/**
+ * Timeline Store
+ *
+ * OWNERSHIP: Editable timeline domain state (single source of truth)
+ * PERSISTENCE: Persistent (saved/loaded by projectStore)
+ * MUTABILITY: Mutable (user edits, operations)
+ *
+ * Responsibilities:
+ * - Own all timeline composition state (tracks, clips, selections)
+ * - Provide mutation operations (add/remove/update clips/tracks)
+ * - Maintain timeline view state (zoom, scroll)
+ * - Emit epoch changes for render invalidation
+ *
+ * Does NOT:
+ * - Persist to disk (projectStore handles serialization)
+ * - Manage runtime resources (ProjectSession handles playback/scheduler)
+ * - Reset itself (only projectStore loads/clears on project switch)
+ *
+ * Architecture principle:
+ * This is the authoritative source for "what is on the timeline right now"
+ * All other systems (render, playback, export) consume this as immutable input
+ */
+
+import { create } from "zustand";
+import type {
+  Track,
+  TrackType,
+  Clip,
+  TextClip,
+  TransitionTimelineItem,
+  TransitionType,
+  TimelineMarker,
+} from "@/types";
+import {
+  type CaptionTrack,
+  CAPTION_MODEL_VERSION,
+  DEFAULT_CAPTION_STYLE,
+} from "@/types/captions";
+import { synchronizeClipAudioProperties } from "@/types/audio";
+import type { Gap } from "@/types/gap";
+import { generateId, getCounter } from "@/lib/utils/id";
+import {
+  detectGaps,
+  createGap,
+  insertGapWithRipple,
+  removeGapWithRipple,
+  resizeGap,
+  packTrack,
+  mergeAdjacentGaps,
+  validateGap,
+} from "@/lib/timeline/gapEngine";
+import { resolveTextClipStyleUpdate } from "@/lib/text/textClip";
+import { useUIStore } from "./uiStore";
+import { useProjectStore } from "./projectStore";
+import {
+  clampTimelinePixelsPerSecond,
+  clampTimelineZoom,
+  TIMELINE_PPS_PER_ZOOM,
+  TIMELINE_ZOOM_DEFAULT,
+} from "../lib/timeline/timelineZoom";
+import {
+  getTimelineContentEnd,
+  normalizeClipTiming,
+} from "@/lib/timeline/timelineClip";
+import {
+  autoSaveMiddleware,
+  suppressAutoSave,
+  enableAutoSave,
+} from "./middleware/autoSaveMiddleware";
+import {
+  TRACK_TYPE_CONFIG,
+  shouldAutoPruneTrack,
+  getTrackInsertionIndex,
+  getTrackInsertionIndexGrouped,
+  getSafeTrackInsertionIndex,
+  normalizeTrackOrderForMainVideo,
+  resolvePrimaryVideoTrackId,
+} from "@/lib/timeline/trackTypeConfig";
+
+interface TimelineStore {
+  tracks: Track[];
+  clips: Clip[];
+  gaps: Gap[]; // NEW: First-class gap entities
+  transitions: TransitionTimelineItem[];
+  /** Caption tracks (§3 Cue-array data model) */
+  captionTracks: CaptionTrack[];
+  /** Currently active caption track ID for editing */
+  activeCaptionTrackId: string | null;
+  /**
+   * First created video track - UI metadata only.
+   * Used for: default drop target, visual highlighting, user expectations.
+   * Used for: main-row identity and enforcing the visual track boundary.
+   * The compositor resolves frames by time, not by track constraints.
+   */
+  mainVideoTrackId: string | null;
+  /**
+   * Timeline epoch - increments on every timeline mutation.
+   * Used for cache invalidation in render engine and evaluation.
+   */
+  epoch: number;
+  /** Changes once per project hydration so the view can apply its initial overview. */
+  projectLoadRevision: number;
+  zoomLevel: number;
+  scrollLeft: number;
+  viewportWidth: number;
+  pixelsPerSecond: number;
+  rippleEditEnabled: boolean;
+  snapEnabled: boolean;
+  /** Active snap guides (vertical alignment indicators during resize/drag) */
+  snapGuides: Array<{
+    time: number;
+    type: "clip-start" | "clip-end" | "playhead";
+  }>;
+  setSnapGuides: (
+    guides: Array<{
+      time: number;
+      type: "clip-start" | "clip-end" | "playhead";
+    }>,
+  ) => void;
+  clearSnapGuides: () => void;
+  /** @internal Batch nesting depth — do not read directly */
+  _batchDepth: number;
+  /** @internal Deferred epoch flag — do not read directly */
+  _pendingEpochIncrement: boolean;
+  /** Execute a batch of mutations safely. Epoch increment is deferred until the block completes. */
+  withBatch: (fn: () => void) => void;
+  /** Increment epoch (for cache invalidation) */
+  incrementEpoch: () => void;
+  /** Hydrate timeline state from project load (atomic operation) */
+  hydrateFromProject: (payload: {
+    tracks?: any[];
+    clips?: any[];
+    transitions?: TransitionTimelineItem[];
+    gaps?: Gap[];
+    markers?: TimelineMarker[];
+    captionTracks?: CaptionTrack[];
+    mainVideoTrackId?: string | null;
+    cleanEmptyTracks?: boolean;
+  }) => void;
+  setCaptionTracks: (tracks: CaptionTrack[]) => void;
+  setActiveCaptionTrackId: (id: string | null) => void;
+  updateCaptionTrack: (trackId: string, updates: Partial<CaptionTrack>) => void;
+  addCaptionTrack: (track?: Partial<CaptionTrack>) => CaptionTrack;
+  removeCaptionTrack: (trackId: string) => void;
+  addTrack: (type: TrackType) => void;
+  /** Inserts a track at index (clamped); returns the new track id. */
+  insertTrackAt: (type: TrackType, index: number) => string;
+  removeTrack: (trackId: string) => void;
+  toggleTrackLock: (trackId: string) => void;
+  toggleTrackMute: (trackId: string) => void;
+  toggleTrackSolo: (trackId: string) => void;
+  toggleTrackVisibility: (trackId: string) => void;
+  addClip: (clip: Clip) => void;
+  removeClip: (clipId: string) => void;
+  updateClip: (clipId: string, updates: Partial<Clip>) => void;
+  /**
+   * Apply a `PlaybackMapping` to a clip.
+   *
+   * This is the preferred API for anything that changes how a clip maps
+   * global timeline time to source-media time (speed, reverse, freeze,
+   * speed ramp). Callers receive a clearly-named action rather than
+   * constructing a `Partial<Clip>` with `playbackMapping` by hand.
+   *
+   * @param clipId  - Target clip
+   * @param mapping - The desired PlaybackMapping (or `undefined` to clear,
+   *                  which falls back to legacy `speed` scalar → 1×).
+   */
+  setClipPlaybackMapping: (clipId: string, mapping: import("@/types").PlaybackMapping | undefined) => void;
+  addTransition: (transition: TransitionTimelineItem) => void;
+  removeTransition: (transitionId: string) => void;
+  updateTransition: (
+    transitionId: string,
+    updates: Partial<TransitionTimelineItem>,
+  ) => void;
+  createTransitionBetweenClips: (
+    fromClipId: string,
+    toClipId: string,
+    type: TransitionType,
+    duration?: number,
+    renderer?: string,
+  ) => { transition?: TransitionTimelineItem; error: string | null };
+  moveClip: (clipId: string, startTime: number) => void;
+  setZoom: (level: number) => void;
+  /** Clamps to the SRP zoom range and syncs `zoomLevel` to `pixelsPerSecond / 100`. */
+  setPixelsPerSecond: (pps: number, allowOverviewFloor?: boolean) => void;
+  setScrollLeft: (left: number) => void;
+  setViewportWidth: (width: number) => void;
+  getTimelineEndTime: () => number;
+  swapClips: () => { error: string | null };
+  toggleRippleEdit: () => void;
+  toggleSnapEnabled: () => void;
+  rippleTrimClip: (
+    clipId: string,
+    side: "left" | "right",
+    deltaTime: number,
+  ) => void;
+  // Sequence-based operations
+  insertClipAtIndex: (clipId: string, trackId: string, index: number) => void;
+  normalizeTrack: (trackId: string) => void;
+  getTrackClips: (trackId: string) => Clip[];
+  removeEmptyNonMainTracks: (candidateTrackIds?: string[]) => void;
+  /**
+   * Canonical find-or-create for a track of a given type.
+   * Respects the reuseStrategy in TRACK_TYPE_CONFIG:
+   *   "primary"         → returns mainVideoTrackId (never creates)
+   *   "shared"          → reuses the single existing track of this type, or creates one
+   *   "per-clip"        → always creates a new track
+   *   "per-media-group" → reuses a track whose clips share mediaId, or creates one
+   *
+   * This is the ONLY place that should create tracks in response to a clip being added.
+   * Components must call this instead of rolling their own find-or-create logic.
+   */
+  ensureTrackForType: (type: TrackType, mediaId?: string) => string;
+  // Gap operations
+  insertGap: (
+    trackId: string,
+    startTime: number,
+    duration: number,
+  ) => Gap | null;
+  removeGap: (gapId: string) => void;
+  resizeGapDuration: (gapId: string, newDuration: number) => void;
+  toggleGapProtection: (gapId: string) => void;
+  detectAndSyncGaps: (trackId?: string) => void;
+  packTrackGaps: (trackId: string) => void;
+  // Marker operations
+  markers: TimelineMarker[];
+  addMarker: (time: number, name?: string, color?: string) => string;
+  removeMarker: (markerId: string) => void;
+  updateMarker: (markerId: string, updates: Partial<TimelineMarker>) => void;
+  addClipMarker: (
+    clipId: string,
+    localTime: number,
+    name?: string,
+    color?: string,
+  ) => string;
+  removeClipMarker: (clipId: string, markerId: string) => void;
+  jumpToNextMarker: () => void;
+  jumpToPrevMarker: () => void;
+  // Audio Automation & FX operations
+  addAudioKeyframe: (
+    clipId: string,
+    time: number,
+    gain: number,
+    easing?: "linear" | "exponential" | "bezier",
+  ) => string;
+  removeAudioKeyframe: (clipId: string, keyframeId: string) => void;
+  updateAudioKeyframe: (
+    clipId: string,
+    keyframeId: string,
+    updates: Partial<import("@/types").AudioKeyframe>,
+  ) => void;
+  updateClipAudioFX: (
+    clipId: string,
+    fxUpdates: Partial<import("@/types").AudioFXConfig>,
+  ) => void;
+  // Chroma Key & Color Grading operations
+  updateClipChromaKey: (
+    clipId: string,
+    updates: Partial<import("@/types").ChromaKeyConfig>,
+  ) => void;
+  updateClipColorGrade: (
+    clipId: string,
+    updates: Partial<import("@/types").ColorGradeUniforms>,
+  ) => void;
+}
+
+/** Track row height in px — derived from the canonical TRACK_TYPE_CONFIG registry. */
+const trackHeights: Record<string, number> = Object.fromEntries(
+  Object.entries(TRACK_TYPE_CONFIG).map(([type, cfg]) => [type, cfg.height]),
+);
+const MIN_TRIM_DURATION_SEC = 1;
+
+/**
+ * Where to insert a new row when dropping off-track.
+ * Delegates to trackTypeConfig.getTrackInsertionIndex — do NOT add logic here.
+ * @deprecated Prefer getTrackInsertionIndex from trackTypeConfig directly.
+ */
+export function getInsertIndexForNewTrack(
+  tracks: Track[],
+  trackType: TrackType,
+): number {
+  return getTrackInsertionIndex(tracks, trackType);
+}
+
+/**
+ * Find the best insertion index for a new track, grouping effects/filters by their mediaId.
+ * Delegates to trackTypeConfig.getTrackInsertionIndexGrouped — do NOT add logic here.
+ * @deprecated Prefer getTrackInsertionIndexGrouped from trackTypeConfig directly.
+ */
+export function getInsertIndexForNewTrackGrouped(
+  tracks: Track[],
+  clips: Clip[],
+  trackType: TrackType,
+  mediaId?: string,
+): number {
+  return getTrackInsertionIndexGrouped(tracks, clips, trackType, mediaId);
+}
+
+/**
+ * Smart track insertion that respects drop position context.
+ * Uses newTrackPosition and betweenTrackIds to determine exact insertion point.
+ */
+export function getInsertIndexForNewTrackSmart(
+  tracks: Track[],
+  trackType: TrackType,
+  context?: {
+    newTrackPosition?: "above" | "below" | "between" | null;
+    betweenTrackIds?: { aboveId: string; belowId: string };
+    mainVideoTrackId?: string | null;
+  },
+): number {
+  // If no context, use legacy behavior
+  if (!context || !context.newTrackPosition) {
+    return getSafeTrackInsertionIndex(
+      tracks,
+      trackType,
+      getInsertIndexForNewTrack(tracks, trackType),
+      context?.mainVideoTrackId,
+    );
+  }
+
+  const { newTrackPosition, betweenTrackIds } = context;
+  let proposedIndex = getInsertIndexForNewTrack(tracks, trackType);
+
+  // Above all tracks
+  if (newTrackPosition === "above") {
+    proposedIndex = 0;
+  }
+
+  // Below all tracks
+  if (newTrackPosition === "below") {
+    proposedIndex = tracks.length;
+  }
+
+  // Between specific tracks
+  if (newTrackPosition === "between" && betweenTrackIds) {
+    const belowIndex = tracks.findIndex(
+      (t) => t.id === betweenTrackIds.belowId,
+    );
+    if (belowIndex >= 0) {
+      proposedIndex = belowIndex; // Insert at the position of the "below" track (pushing it down)
+    }
+  }
+
+  return getSafeTrackInsertionIndex(
+    tracks,
+    trackType,
+    proposedIndex,
+    context.mainVideoTrackId,
+  );
+}
+
+export const useTimelineStore = create<TimelineStore>(
+  autoSaveMiddleware((set, get) => ({
+    tracks: [],
+    clips: [],
+    gaps: [], // NEW: Initialize empty gaps array
+    transitions: [],
+    markers: [],
+    captionTracks: [],
+    activeCaptionTrackId: null,
+    mainVideoTrackId: null,
+    epoch: 0,
+    projectLoadRevision: 0,
+    zoomLevel: TIMELINE_ZOOM_DEFAULT,
+    scrollLeft: 0,
+    viewportWidth: 1200,
+    pixelsPerSecond: TIMELINE_ZOOM_DEFAULT * TIMELINE_PPS_PER_ZOOM,
+    rippleEditEnabled: false,
+    snapEnabled: true,
+    snapGuides: [],
+    _batchDepth: 0,
+    _pendingEpochIncrement: false,
+
+    setSnapGuides: (guides) => set({ snapGuides: guides }),
+    clearSnapGuides: () => set({ snapGuides: [] }),
+
+    withBatch: (fn) => {
+      set((state) => ({ _batchDepth: state._batchDepth + 1 }));
+      // Audit 6.5 fix: only commit the epoch increment when fn() completes successfully.
+      // An exception inside fn() could otherwise leave _pendingEpochIncrement=true and
+      // cause the next mutation to increment epoch for a timeline that was not actually changed.
+      let completedSuccessfully = false;
+      try {
+        fn();
+        completedSuccessfully = true;
+      } finally {
+        set((state) => {
+          const newDepth = Math.max(0, state._batchDepth - 1);
+          if (
+            newDepth === 0 &&
+            state._pendingEpochIncrement &&
+            completedSuccessfully
+          ) {
+            return {
+              _batchDepth: 0,
+              _pendingEpochIncrement: false,
+              epoch: state.epoch + 1,
+            };
+          }
+          // If fn() threw, clear the pending flag but do NOT increment epoch.
+          if (newDepth === 0 && !completedSuccessfully) {
+            return { _batchDepth: 0, _pendingEpochIncrement: false };
+          }
+          return { _batchDepth: newDepth };
+        });
+      }
+    },
+
+    incrementEpoch: () => {
+      // console.log("📊 [TIMELINE] incrementEpoch called");
+      set((state) => {
+        if (state._batchDepth > 0) {
+          return { _pendingEpochIncrement: true };
+        }
+        return { epoch: state.epoch + 1 };
+      });
+    },
+
+    hydrateFromProject: (payload) => {
+      suppressAutoSave();
+      try {
+        const finalTracksRaw = payload?.tracks ?? [];
+        const finalClipsRaw = payload?.clips ?? [];
+        const finalTransitions = payload?.transitions ?? [];
+        const finalGaps = (payload as any)?.gaps ?? []; // Load gaps from project
+        const finalMarkers: TimelineMarker[] = (payload as any)?.markers ?? [];
+
+        // Clean up empty tracks (tracks with no clips) when cleanEmptyTracks is enabled
+        let finalTracks = finalTracksRaw;
+        if (payload?.cleanEmptyTracks) {
+          const clipTrackIds = new Set(
+            finalClipsRaw.map((c: any) => c.trackId),
+          );
+          const hasClips = finalClipsRaw.length > 0;
+          finalTracks = finalTracksRaw.filter((track: any) => {
+            if (!hasClips) return true;
+            return clipTrackIds.has(track.id);
+          });
+        }
+
+        // Adopt the larger video row for projects created with the previous
+        // compact 68px default. Explicitly taller user rows are preserved.
+        finalTracks = finalTracks.map((track: any) =>
+          track.type === "video" && track.height === 68
+            ? { ...track, height: trackHeights.video }
+            : track,
+        );
+
+        // Normalize clip timing with media asset data
+        const mediaAssets = useProjectStore.getState().mediaAssets;
+
+        const normalizedClips = finalClipsRaw.map((clip: Clip) => {
+          const asset = mediaAssets.find((a) => a.id === clip.mediaId);
+          return normalizeClipTiming(clip, asset);
+        });
+
+        // The main row is explicit when present. For older projects, infer it
+        // from the clip/media contract and canonical bottommost video track position
+        // so an overlay track or secondary video row cannot steal the main A-roll role.
+        const explicitMainTrack = finalTracks.find(
+          (track) =>
+            track.id === payload?.mainVideoTrackId && track.type === "video",
+        );
+        const inferredMainTrack = [...finalTracks].reverse().find(
+          (track) =>
+            track.type === "video" &&
+            finalClipsRaw.some((clip: any) => {
+              if (clip.trackId !== track.id) return false;
+              if (clip.kind === "video") return true;
+              const asset = mediaAssets.find(
+                (candidate) => candidate.id === clip.mediaId,
+              );
+              return asset?.type === "video";
+            }),
+        );
+        const newMainVideoTrackId =
+          explicitMainTrack?.id ??
+          inferredMainTrack?.id ??
+          resolvePrimaryVideoTrackId(finalTracks, payload?.mainVideoTrackId);
+        finalTracks = normalizeTrackOrderForMainVideo(
+          finalTracks,
+          newMainVideoTrackId,
+        );
+
+        // Atomic state update - all or nothing
+        const loadedCaptionTracks = (payload as any)?.captionTracks ?? [];
+        set({
+          tracks: finalTracks,
+          clips: normalizedClips,
+          gaps: finalGaps, // Load gaps from project
+          transitions: finalTransitions,
+          markers: finalMarkers,
+          captionTracks: loadedCaptionTracks,
+          activeCaptionTrackId: loadedCaptionTracks[0]?.id ?? null,
+          scrollLeft: 0,
+          zoomLevel: TIMELINE_ZOOM_DEFAULT,
+          pixelsPerSecond: TIMELINE_ZOOM_DEFAULT * TIMELINE_PPS_PER_ZOOM,
+          projectLoadRevision: get().projectLoadRevision + 1,
+          epoch: 0, // Reset epoch on project load
+          mainVideoTrackId: newMainVideoTrackId,
+          snapGuides: [],
+          rippleEditEnabled: false,
+          snapEnabled: true,
+          _batchDepth: 0,
+          _pendingEpochIncrement: false,
+        });
+
+        // Audit 2.7 fix: detect gaps synchronously instead of via requestAnimationFrame so
+        // there is no window where the store holds clips but an empty gaps array. Matches
+        // the pattern used in removeClip which also calls detectAndSyncGaps() synchronously.
+        if (finalGaps.length === 0 && normalizedClips.length > 0) {
+          get().detectAndSyncGaps();
+        }
+      } finally {
+        enableAutoSave();
+      }
+    },
+
+    setCaptionTracks: (tracks) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = { captionTracks: tracks };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    setActiveCaptionTrackId: (id) => set({ activeCaptionTrackId: id }),
+
+    updateCaptionTrack: (trackId, updates) => {
+      set((state) => {
+        const nextTracks = state.captionTracks.map((t) =>
+          t.id === trackId ? { ...t, ...updates } : t,
+        );
+        const next: Partial<TimelineStore> = { captionTracks: nextTracks };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    addCaptionTrack: (track) => {
+      const id = track?.id || generateId("caption_track");
+      const newTrack: CaptionTrack = {
+        id,
+        captionModelVersion: CAPTION_MODEL_VERSION,
+        name: track?.name || "Subtitles",
+        visible: track?.visible ?? true,
+        locked: track?.locked ?? false,
+        defaultStyle: track?.defaultStyle || { ...DEFAULT_CAPTION_STYLE },
+        cues: track?.cues || [],
+      };
+      set((state) => {
+        const nextTracks = [...state.captionTracks, newTrack];
+        const next: Partial<TimelineStore> = {
+          captionTracks: nextTracks,
+          activeCaptionTrackId: state.activeCaptionTrackId ?? id,
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+      return newTrack;
+    },
+
+    removeCaptionTrack: (trackId) => {
+      set((state) => {
+        const nextTracks = state.captionTracks.filter((t) => t.id !== trackId);
+        const nextActiveId =
+          state.activeCaptionTrackId === trackId
+            ? (nextTracks[0]?.id ?? null)
+            : state.activeCaptionTrackId;
+        const next: Partial<TimelineStore> = {
+          captionTracks: nextTracks,
+          activeCaptionTrackId: nextActiveId,
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    addTrack: (type) => {
+      const newTrack: Track = {
+        id: generateId("track"),
+        type,
+        name: `${type.charAt(0).toUpperCase() + type.slice(1)} ${getCounter() % 100}`,
+        muted: false,
+        locked: false,
+        visible: true,
+        height: trackHeights[type],
+      };
+      set((state) => {
+        const insertIndex = getSafeTrackInsertionIndex(
+          state.tracks,
+          type,
+          state.tracks.length,
+          state.mainVideoTrackId,
+        );
+        const nextTracks = [...state.tracks];
+        nextTracks.splice(insertIndex, 0, newTrack);
+        const next: Partial<TimelineStore> = {
+          tracks: nextTracks,
+          mainVideoTrackId:
+            resolvePrimaryVideoTrackId(state.tracks, state.mainVideoTrackId) ??
+            (type === "video" ? newTrack.id : null),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    insertTrackAt: (type, index) => {
+      const newTrack: Track = {
+        id: generateId("track"),
+        type,
+        name: `${type.charAt(0).toUpperCase() + type.slice(1)} ${getCounter() % 100}`,
+        muted: false,
+        locked: false,
+        visible: true,
+        height: trackHeights[type],
+      };
+      const id = newTrack.id;
+      set((state) => {
+        const clamped = getSafeTrackInsertionIndex(
+          state.tracks,
+          type,
+          index,
+          state.mainVideoTrackId,
+        );
+        const nextTracks = [...state.tracks];
+        nextTracks.splice(clamped, 0, newTrack);
+        const next: Partial<TimelineStore> = {
+          tracks: nextTracks,
+          mainVideoTrackId:
+            resolvePrimaryVideoTrackId(state.tracks, state.mainVideoTrackId) ??
+            (type === "video" ? newTrack.id : null),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+      return id;
+    },
+
+    removeTrack: (trackId) => {
+      // TL- fix: Also cascade-remove gaps for the deleted track
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          tracks: state.tracks.filter((t) => t.id !== trackId),
+          clips: state.clips.filter((c) => c.trackId !== trackId),
+          transitions: state.transitions.filter(
+            (transition) => transition.placement.trackId !== trackId,
+          ),
+          gaps: state.gaps.filter((g) => g.trackId !== trackId),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    toggleTrackLock: (trackId) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          tracks: state.tracks.map((track) =>
+            track.id === trackId ? { ...track, locked: !track.locked } : track,
+          ),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    // HIDDEN-006 fix: toggleTrackMute and toggleTrackVisibility now increment epoch
+    // so the evaluation cache is invalidated and the render pipeline sees the change.
+    toggleTrackMute: (trackId) => {
+      if (get().tracks.find((track) => track.id === trackId)?.locked) return;
+
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          tracks: state.tracks.map((track) =>
+            track.id === trackId ? { ...track, muted: !track.muted } : track,
+          ),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    toggleTrackSolo: (trackId) => {
+      if (get().tracks.find((track) => track.id === trackId)?.locked) return;
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          tracks: state.tracks.map((track) =>
+            track.id === trackId ? { ...track, solo: !track.solo } : track,
+          ),
+        };
+        if (state._batchDepth > 0) next._pendingEpochIncrement = true;
+        else next.epoch = state.epoch + 1;
+        return next;
+      });
+    },
+
+    toggleTrackVisibility: (trackId) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          tracks: state.tracks.map((track) =>
+            track.id === trackId
+              ? { ...track, visible: !track.visible }
+              : track,
+          ),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    ensureTrackForType: (type, mediaId) => {
+      const state = get();
+      const config = TRACK_TYPE_CONFIG[type];
+      if (!config) {
+        throw new Error(`[ensureTrackForType] Unknown track type: "${type}"`);
+      }
+
+      switch (config.reuseStrategy) {
+        case "primary": {
+          // The primary video track must already exist; never create one here.
+          const primary = state.tracks.find((t) => t.type === "video") ?? null;
+          if (!primary)
+            throw new Error(
+              "[ensureTrackForType] primary: no video track found",
+            );
+          return primary.id;
+        }
+
+        case "shared": {
+          // All clips of this type share one track.
+          const existing = get().tracks.find((t) => t.type === type);
+          if (existing) return existing.id;
+          const idx = getTrackInsertionIndex(get().tracks, type);
+          return get().insertTrackAt(type, idx);
+        }
+
+        case "per-clip": {
+          // Always create a fresh track.
+          const idx = getTrackInsertionIndex(get().tracks, type);
+          return get().insertTrackAt(type, idx);
+        }
+
+        case "per-media-group": {
+          // Reuse a track of this type that already carries a clip with the same mediaId.
+          if (mediaId) {
+            const { tracks, clips } = get();
+            const match = tracks.find(
+              (t) =>
+                t.type === type &&
+                clips.some((c) => c.trackId === t.id && c.mediaId === mediaId),
+            );
+            if (match) return match.id;
+          }
+          const { tracks, clips } = get();
+          const idx = getTrackInsertionIndexGrouped(
+            tracks,
+            clips,
+            type,
+            mediaId,
+          );
+          return get().insertTrackAt(type, idx);
+        }
+      }
+    },
+
+    addClip: (clip) => {
+      set((state) => {
+        // Prevent adding duplicate clips with the same ID
+        const existingClip = state.clips.find((c) => c.id === clip.id);
+        if (existingClip) {
+          return state; // Return unchanged state
+        }
+
+        const wasEmpty = state.clips.length === 0;
+
+        // Check for overlap and adjust position if needed
+        const trackClips = state.clips
+          .filter((c) => c.trackId === clip.trackId)
+          .sort((a, b) => a.startTime - b.startTime);
+
+        let finalStartTime = clip.startTime;
+        let hasOverlap = true;
+
+        // Keep checking until no overlaps (handle cascading shifts)
+        while (hasOverlap) {
+          hasOverlap = false;
+          for (const existingClip of trackClips) {
+            const existingEnd = existingClip.startTime + existingClip.duration;
+            const newEnd = finalStartTime + clip.duration;
+
+            // Check for overlap
+            if (
+              finalStartTime < existingEnd &&
+              newEnd > existingClip.startTime
+            ) {
+              // Overlap detected - move to end of conflicting clip
+              finalStartTime = existingEnd;
+              hasOverlap = true; // Re-check with new position
+              break; // Restart the loop from beginning
+            }
+          }
+        }
+
+        // Create clip with safe position & guaranteed trimOut
+        const trimIn = clip.trimIn ?? 0;
+        const safeClip = {
+          ...clip,
+          startTime: finalStartTime,
+          trimIn,
+          trimOut: clip.trimOut ?? trimIn + clip.duration,
+        };
+
+        // If timeline was empty, switch to program preview and seek to first clip's start time
+        if (wasEmpty) {
+          // console.log(`🎯 [TIMELINE] First clip added to empty timeline! Current clock time before seek:`, {
+          //   clipStartTime: safeClip.startTime,
+          //   clipDuration: clip.duration,
+          //   clipId: clip.id,
+          // });
+          // 1) Update UI first so preview panel closes before transport switch
+          try {
+            useUIStore.getState().exitSourceMode();
+          } catch (e) {
+            // swallow - defensive in case store is not ready
+          }
+
+          // 2) Then switch transport context and seek (dynamic import to avoid heavier cycles)
+          import("@/core/runtime/ProjectSession")
+            .then(({ getActiveSessionOrNull }) => {
+              const session = getActiveSessionOrNull();
+              if (session?.transportAuthority) {
+                session.transportAuthority.setActiveContext("program");
+                // Seek to the new clip's start time for immediate visual feedback
+                const firstClipStartTime = safeClip.startTime;
+                // console.log(`⏩ [TIMELINE] Seeking playhead to first clip start: ${firstClipStartTime}`);
+                session.transportAuthority.seek(firstClipStartTime);
+              }
+            })
+            .catch(() => {});
+        }
+
+        // TL- fix: Respect batch epoch gating (consistent with all other mutations)
+        const next: Partial<TimelineStore> = {
+          clips: [...state.clips, safeClip],
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+
+      // Trigger background preload if the added clip has a templateId
+      if (clip.templateId) {
+        import("@/features/text-templates/templateStore")
+          .then(({ useTemplateStore }) => {
+            useTemplateStore
+              .getState()
+              .preloadTemplatesAndFontsForClips([clip]);
+          })
+          .catch(() => {});
+      }
+
+      // Detect and sync gaps on the affected track after clip addition
+      // Use requestAnimationFrame to ensure state update is complete
+      requestAnimationFrame(() => {
+        get().detectAndSyncGaps(clip.trackId);
+      });
+    },
+
+    removeClip: (clipId) => {
+      const state = get();
+      const clipToRemove = state.clips.find((c) => c.id === clipId);
+      const removedTrackId = clipToRemove?.trackId;
+
+      set((state) => {
+        const clipToRemove = state.clips.find((c) => c.id === clipId);
+        const remainingClips = state.clips.filter((c) => c.id !== clipId);
+
+        // If removing the last clip, reset playhead to 00:00
+        if (remainingClips.length === 0) {
+          // Import dynamically to avoid circular dependency
+          import("@/core/runtime/ProjectSession")
+            .then(({ getActiveSessionOrNull }) => {
+              const session = getActiveSessionOrNull();
+              if (session?.transportAuthority) {
+                session.transportAuthority.seek(0);
+              }
+            })
+            .catch(() => {
+              // The timeline can outlive the optional runtime during teardown
+              // or a project switch; a missing session needs no recovery here.
+            });
+        }
+
+        // Auto-prune: remove the track when its last clip is deleted,
+        // if the track type is configured with autoPrune: true.
+        let tracksToKeep = state.tracks;
+        let gapsToKeep = state.gaps;
+        let mainVideoTrackId = state.mainVideoTrackId;
+        let removedTrackIdForCleanup: string | null = null;
+        if (clipToRemove) {
+          const trackId = clipToRemove.trackId;
+          const track = state.tracks.find((t) => t.id === trackId);
+          const hasOtherClips = remainingClips.some(
+            (c) => c.trackId === trackId,
+          );
+
+          if (
+            track &&
+            !hasOtherClips &&
+            shouldAutoPruneTrack(track, state.tracks, state.mainVideoTrackId)
+          ) {
+            tracksToKeep = state.tracks.filter((t) => t.id !== trackId);
+            gapsToKeep = state.gaps.filter((g) => g.trackId !== trackId);
+            removedTrackIdForCleanup = trackId;
+            if (mainVideoTrackId === trackId) {
+              mainVideoTrackId =
+                tracksToKeep.find((t) => t.type === "video")?.id ?? null;
+            }
+          }
+        }
+
+        const next: Partial<TimelineStore> = {
+          clips: remainingClips,
+          tracks: tracksToKeep,
+          gaps: gapsToKeep,
+          mainVideoTrackId,
+          transitions: state.transitions.filter(
+            (transition) =>
+              transition.fromItemId !== clipId &&
+              transition.toItemId !== clipId,
+          ),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+
+        // TL- fix: Clear selectedTrackId if the auto-removed track was selected
+        if (removedTrackIdForCleanup) {
+          try {
+            const uiState = useUIStore.getState();
+            if (uiState.selectedTrackId === removedTrackIdForCleanup) {
+              useUIStore.setState({ selectedTrackId: null });
+            }
+          } catch {
+            // Defensive — UIStore may not be initialized during tests
+          }
+        }
+
+        return next;
+      });
+
+      // Detect and sync gaps on the affected track after clip removal.
+      // Called synchronously (not via rAF) so there is no single-frame window
+      // where the store has stale gap entities after a clip is removed.
+      if (removedTrackId) {
+        get().detectAndSyncGaps(removedTrackId);
+      }
+    },
+
+    addTransition: (transition) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          transitions: [
+            ...state.transitions.filter((t) => t.id !== transition.id),
+            transition,
+          ],
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    removeTransition: (transitionId) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          transitions: state.transitions.filter(
+            (transition) => transition.id !== transitionId,
+          ),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    updateTransition: (transitionId, updates) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          transitions: state.transitions.map((t) =>
+            t.id === transitionId ? { ...t, ...updates } : t,
+          ),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    createTransitionBetweenClips: (
+      fromClipId,
+      toClipId,
+      type,
+      duration = 0.5,
+      renderer,
+    ) => {
+      const state = get();
+      const fromClip = state.clips.find((clip) => clip.id === fromClipId);
+      const toClip = state.clips.find((clip) => clip.id === toClipId);
+      if (!fromClip || !toClip)
+        return { error: "Select two clips to add a transition" };
+      if (fromClip.trackId !== toClip.trackId)
+        return { error: "Transitions require two clips on the same track" };
+
+      const track = state.tracks.find((t) => t.id === fromClip.trackId);
+      if (!track) return { error: "Transition track was not found" };
+      if (track.locked)
+        return { error: "Unlock the track before adding a transition" };
+      if (track.type === "audio")
+        return {
+          error: "Visual transitions can only be added to video or text tracks",
+        };
+
+      const [left, right] =
+        fromClip.startTime <= toClip.startTime
+          ? [fromClip, toClip]
+          : [toClip, fromClip];
+      const leftEnd = left.startTime + left.duration;
+      const gap = right.startTime - leftEnd;
+      if (gap > 0.001)
+        return { error: "Move clips together before adding a transition" };
+      if (left.duration < duration / 2 || right.duration < duration / 2)
+        return { error: "Clips are too short for this transition" };
+
+      const transitionStart = Math.max(0, leftEnd - duration / 2);
+      const transition: TransitionTimelineItem = {
+        id: generateId("transition"),
+        kind: "transition",
+        type,
+        renderer, // Store renderer ID from API transition
+        fromItemId: left.id,
+        toItemId: right.id,
+        alignment: "center",
+        easing: "ease-in-out",
+        placement: {
+          trackId: left.trackId,
+          startTime: transitionStart,
+          duration,
+          role: "effect",
+          zIndex: Number.MAX_SAFE_INTEGER,
+        },
+        effects: { effects: [], version: 0 },
+        metadata: {
+          createdFrom: "transitions-panel",
+        },
+      };
+
+      return { transition, error: null };
+    },
+
+    updateClip: (clipId, updates) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          clips: state.clips.map((c) => {
+            if (c.id !== clipId) return c;
+
+            const isTextClip = "text" in c;
+            if (isTextClip) {
+              try {
+                const project = useProjectStore.getState().project;
+                const canvasWidth = project?.canvasWidth ?? 1920;
+                const canvasHeight = project?.canvasHeight ?? 1080;
+                return {
+                  ...c,
+                  ...resolveTextClipStyleUpdate(
+                    c as TextClip,
+                    updates as Partial<TextClip>,
+                    canvasWidth,
+                    canvasHeight,
+                  ),
+                };
+              } catch (e) {
+                return { ...c, ...updates };
+              }
+            }
+
+            const synchronized = synchronizeClipAudioProperties(c, updates);
+            const linkedSource =
+              c.audio?.linkState === "unlinked" && c.audio.linkedClipId
+                ? state.clips.find((clip) => clip.id === c.audio?.linkedClipId)
+                : undefined;
+            const linkOffsetSeconds =
+              updates.startTime !== undefined && linkedSource
+                ? updates.startTime - linkedSource.startTime
+                : synchronized.audio?.linkOffsetSeconds;
+            return {
+              ...c,
+              ...synchronized,
+              ...(synchronized.audio && linkOffsetSeconds !== undefined
+                ? { audio: { ...synchronized.audio, linkOffsetSeconds } }
+                : {}),
+            };
+          }),
+        };
+        // Skip epoch increment during transform preview (high-frequency updates)
+        // The final mouseup will commit to history which will increment epoch properly
+        const isTransformPreview =
+          "_skipEpochIncrement" in updates &&
+          (updates as any)._skipEpochIncrement;
+
+        // EXCEPTION: For text templates, always increment epoch even during transform preview
+        // because templates need to re-render at different scales in real-time
+        const clip = state.clips.find((c) => c.id === clipId);
+        const isTextTemplate =
+          clip && "templateId" in clip && (clip as TextClip).templateId;
+        const isResizing =
+          updates.width !== undefined || updates.height !== undefined;
+
+        if (isTransformPreview && !(isTextTemplate && isResizing)) {
+          // Don't increment epoch for preview updates (except template resizing)
+          return next;
+        }
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+
+      // Trigger preload if templateId is updated
+      if (updates.templateId) {
+        import("@/features/text-templates/templateStore")
+          .then(({ useTemplateStore }) => {
+            useTemplateStore
+              .getState()
+              .preloadTemplatesAndFontsForClips([
+                { templateId: updates.templateId },
+              ]);
+          })
+          .catch(() => {});
+      }
+    },
+
+    setClipPlaybackMapping: (clipId, mapping) => {
+      get().updateClip(clipId, { playbackMapping: mapping });
+    },
+
+
+    moveClip: (clipId, startTime) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          clips: state.clips.map((c) =>
+            c.id === clipId ? { ...c, startTime } : c,
+          ),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    setPixelsPerSecond: (pps, allowOverviewFloor = false) => {
+      const clamped = clampTimelinePixelsPerSecond(pps, allowOverviewFloor);
+      const zoomLevel = clamped / TIMELINE_PPS_PER_ZOOM;
+      set((state) => {
+        // Zoom animation writes on every RAF. Avoid notifying every subscriber
+        // when a frame has already reached the requested value.
+        if (
+          Object.is(state.pixelsPerSecond, clamped) &&
+          Object.is(state.zoomLevel, zoomLevel)
+        ) {
+          return state;
+        }
+        return {
+          pixelsPerSecond: clamped,
+          zoomLevel,
+        };
+      });
+    },
+
+    setZoom: (level) => {
+      get().setPixelsPerSecond(
+        TIMELINE_PPS_PER_ZOOM * clampTimelineZoom(level),
+      );
+    },
+
+    setScrollLeft: (left) => {
+      set({ scrollLeft: left });
+    },
+    setViewportWidth: (width) => {
+      set({ viewportWidth: width });
+    },
+
+    getTimelineEndTime: () => {
+      const state = get();
+      return getTimelineContentEnd(state.clips);
+    },
+
+    swapClips: () => {
+      const { selectedClipIds } = useUIStore.getState();
+
+      // Guard: exactly 2 clips must be selected
+      if (selectedClipIds.length !== 2) {
+        return { error: "Select exactly 2 clips to swap" };
+      }
+
+      const state = get();
+      const clipA = state.clips.find((c) => c.id === selectedClipIds[0]);
+      const clipB = state.clips.find((c) => c.id === selectedClipIds[1]);
+
+      if (!clipA || !clipB) {
+        return { error: "Selected clips not found" };
+      }
+
+      // Case: different tracks — simple position + track swap
+      if (clipA.trackId !== clipB.trackId) {
+        const collision = state.clips.some((clip) => {
+          if (clip.id === clipA.id || clip.id === clipB.id) return false;
+          const clipEnd = clip.startTime + clip.duration;
+          const clipAOverlapsDestination =
+            clip.trackId === clipB.trackId &&
+            clipB.startTime < clipEnd &&
+            clipB.startTime + clipA.duration > clip.startTime;
+          const clipBOverlapsDestination =
+            clip.trackId === clipA.trackId &&
+            clipA.startTime < clipEnd &&
+            clipA.startTime + clipB.duration > clip.startTime;
+          return clipAOverlapsDestination || clipBOverlapsDestination;
+        });
+
+        if (collision) {
+          return { error: "Not enough space to swap — clips would overlap" };
+        }
+
+        set((state) => {
+          // TL-04 fix: Remove transitions that would bridge different tracks after swap
+          const updatedTransitions = state.transitions.filter((t) => {
+            const refsClipA =
+              t.fromItemId === clipA.id || t.toItemId === clipA.id;
+            const refsClipB =
+              t.fromItemId === clipB.id || t.toItemId === clipB.id;
+            return !refsClipA && !refsClipB;
+          });
+
+          const next: Partial<TimelineStore> = {
+            clips: state.clips.map((c) => {
+              if (c.id === clipA.id) {
+                return {
+                  ...c,
+                  startTime: clipB.startTime,
+                  trackId: clipB.trackId,
+                };
+              }
+              if (c.id === clipB.id) {
+                return {
+                  ...c,
+                  startTime: clipA.startTime,
+                  trackId: clipA.trackId,
+                };
+              }
+              return c;
+            }),
+            transitions: updatedTransitions,
+          };
+          if (state._batchDepth > 0) {
+            next._pendingEpochIncrement = true;
+          } else {
+            next.epoch = state.epoch + 1;
+          }
+          return next;
+        });
+
+        return { error: null };
+      }
+
+      // Case: same track — recalculate positions flush
+      // Ensure left is always the leftmost clip
+      const [left, right] =
+        clipA.startTime < clipB.startTime ? [clipA, clipB] : [clipB, clipA];
+
+      // TL-05 fix: Swap startTime values directly to preserve gaps between clips
+      const newLeftStart = right.startTime;
+      const newRightStart = left.startTime;
+      const newLeftEnd = newLeftStart + right.duration;
+      const newRightEnd = newRightStart + left.duration;
+
+      // Collision check: do the swapped clips overlap any other clips?
+      const trackClips = state.clips.filter(
+        (c) =>
+          c.trackId === left.trackId && c.id !== left.id && c.id !== right.id,
+      );
+
+      // Check if either swapped clip overlaps with other clips on the track
+      const collision = trackClips.some((c) => {
+        const cEnd = c.startTime + c.duration;
+        // Check if clip C overlaps with new left position (right clip moved to left)
+        const overlapsNewLeft =
+          Math.max(newLeftStart, c.startTime) < Math.min(newLeftEnd, cEnd);
+        // Check if clip C overlaps with new right position (left clip moved to right)
+        const overlapsNewRight =
+          Math.max(newRightStart, c.startTime) < Math.min(newRightEnd, cEnd);
+        return overlapsNewLeft || overlapsNewRight;
+      });
+
+      if (collision) {
+        return { error: "Not enough space to swap — clips would overlap" };
+      }
+
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          clips: state.clips.map((c) => {
+            if (c.id === left.id) return { ...c, startTime: newRightStart };
+            if (c.id === right.id) return { ...c, startTime: newLeftStart };
+            return c;
+          }),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+
+      return { error: null };
+    },
+
+    toggleRippleEdit: () => {
+      set((state) => ({ rippleEditEnabled: !state.rippleEditEnabled }));
+    },
+
+    toggleSnapEnabled: () => {
+      set((state) => ({ snapEnabled: !state.snapEnabled }));
+    },
+
+    rippleTrimClip: (clipId, side, deltaTime) => {
+      const state = get();
+      const clip = state.clips.find((c) => c.id === clipId);
+      if (!clip) return;
+
+      const track = state.tracks.find((t) => t.id === clip.trackId);
+      if (track?.locked) return;
+
+      // Clamp trimming to underlying media duration when available.
+      // Falls back to Infinity (no cap) when the media asset cannot be resolved.
+      let mediaDurationBound = Infinity;
+      let mediaType: "video" | "audio" | "image" | null = null;
+      try {
+        // Lazy import to avoid circular deps during store init.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const asset = useProjectStore
+          .getState()
+          .mediaAssets?.find((a: any) => a.id === clip.mediaId);
+        mediaType = asset?.type ?? null;
+        if (
+          asset?.duration &&
+          Number.isFinite(asset.duration) &&
+          asset.duration > 0
+        ) {
+          mediaDurationBound = asset.duration;
+        }
+      } catch {
+        // ignore; keep Infinity bound
+      }
+      if (mediaType === "image") {
+        mediaDurationBound = Math.max(mediaDurationBound, 60 * 60); // 1 hour guardrail
+      }
+
+      const minDuration = MIN_TRIM_DURATION_SEC;
+
+      // Calculate the new clip dimensions
+      let newStartTime = clip.startTime;
+      let newDuration = clip.duration;
+      let rippleAmount = 0;
+
+      if (side === "right") {
+        // Trimming right edge - changes duration
+        const maxDuration = Math.max(
+          minDuration,
+          mediaDurationBound - clip.trimIn,
+        );
+        const desiredDuration = clip.duration + deltaTime;
+        newDuration = Math.max(
+          minDuration,
+          Math.min(desiredDuration, maxDuration),
+        );
+        rippleAmount = newDuration - clip.duration;
+      } else {
+        // Trimming left edge changes the media in-point and duration. In
+        // ripple mode the clip remains anchored at its timeline start; only
+        // the shortened/extended duration is rippled to downstream clips.
+        const maxTrimIn = Math.min(mediaDurationBound, clip.trimOut - 0.001);
+        const desiredDelta = deltaTime;
+        const previousClipEnd = state.clips
+          .filter((c) => c.id !== clipId && c.trackId === clip.trackId)
+          .reduce((maxEnd, c) => {
+            const end = c.startTime + c.duration;
+            if (end <= clip.startTime + 1e-6) return Math.max(maxEnd, end);
+            return maxEnd;
+          }, 0);
+
+        const minDelta = Math.max(
+          -clip.startTime,
+          previousClipEnd - clip.startTime,
+        );
+        const maxDeltaByDuration = clip.duration - minDuration;
+        const maxDeltaByMedia = maxTrimIn - clip.trimIn;
+        // TL-01 fix: Clamp against clip.trimIn to prevent negative source timestamps
+        const clampedDelta = Math.max(
+          minDelta,
+          -clip.trimIn,
+          Math.min(desiredDelta, maxDeltaByDuration, maxDeltaByMedia),
+        );
+
+        newStartTime = clip.startTime;
+        newDuration = clip.duration - clampedDelta;
+        rippleAmount = newDuration - clip.duration;
+      }
+
+      // Find all clips downstream on the same track
+      const downstreamClips = state.clips
+        .filter((c) => {
+          if (c.id === clipId) return false;
+          if (c.trackId !== clip.trackId) return false;
+
+          // For right edge trim: clips that start after the clip's end
+          if (side === "right") {
+            return c.startTime >= clip.startTime + clip.duration;
+          }
+          // For left edge trim: clips that start after the clip's start
+          return c.startTime >= clip.startTime;
+        })
+        .sort((a, b) => a.startTime - b.startTime);
+
+      // Update the trimmed clip and all downstream clips
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          clips: state.clips.map((c) => {
+            if (c.id === clipId) {
+              // Update the clip being trimmed
+              const updates: Partial<Clip> = {
+                startTime: newStartTime,
+                duration: newDuration,
+              };
+
+              // Update trim points for media
+              if (side === "left") {
+                updates.trimIn = clip.trimIn + (clip.duration - newDuration);
+                updates.duration = clip.trimOut - updates.trimIn;
+              } else {
+                updates.trimOut = Math.min(
+                  clip.trimIn + newDuration,
+                  mediaDurationBound,
+                );
+                updates.duration = updates.trimOut - clip.trimIn;
+              }
+
+              return { ...c, ...updates };
+            }
+
+            // Shift downstream clips
+            const downstream = downstreamClips.find((dc) => dc.id === c.id);
+            if (downstream) {
+              return {
+                ...c,
+                startTime: c.startTime + rippleAmount,
+              };
+            }
+
+            return c;
+          }),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    // Sequence-based operations for gap engine
+    getTrackClips: (trackId) => {
+      const state = get();
+      return state.clips
+        .filter((c) => c.trackId === trackId)
+        .sort((a, b) => a.startTime - b.startTime);
+    },
+
+    insertClipAtIndex: (clipId, trackId, index) => {
+      const state = get();
+      const clip = state.clips.find((c) => c.id === clipId);
+      if (!clip) return;
+
+      // Check if clip is already at target position (no-op detection)
+      if (clip.trackId === trackId) {
+        const allTrackClips = state.clips
+          .filter((c) => c.trackId === trackId)
+          .sort((a, b) => a.startTime - b.startTime);
+        const currentIndex = allTrackClips.findIndex((c) => c.id === clipId);
+        if (currentIndex === index) {
+          // No-op: clip is already at target position, don't shift anything
+          return;
+        }
+      }
+
+      // Get all clips on target track (excluding the dragged clip)
+      const trackClips = state.clips
+        .filter((c) => c.trackId === trackId && c.id !== clipId)
+        .sort((a, b) => a.startTime - b.startTime);
+
+      // Insert clip at index
+      trackClips.splice(index, 0, clip);
+
+      // Recalculate all positions (no gaps, no overlaps)
+      let currentTime = 0;
+      const updatedClips = trackClips.map((c) => {
+        const updated = { ...c, startTime: currentTime, trackId };
+        currentTime += c.duration;
+        return updated;
+      });
+
+      // Update state with normalized positions
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          clips: state.clips.map((c) => {
+            const updated = updatedClips.find((uc) => uc.id === c.id);
+            return updated || c;
+          }),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    normalizeTrack: (trackId) => {
+      const state = get();
+      const trackClips = state.clips
+        .filter((c) => c.trackId === trackId)
+        .sort((a, b) => a.startTime - b.startTime);
+
+      let currentTime = 0;
+      const normalized = trackClips.map((clip) => {
+        const updated = { ...clip, startTime: currentTime };
+        currentTime += clip.duration;
+        return updated;
+      });
+
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          clips: state.clips.map((c) => {
+            const norm = normalized.find((n) => n.id === c.id);
+            return norm || c;
+          }),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    removeEmptyNonMainTracks: (candidateTrackIds) => {
+      set((state) => {
+        const videoTracks = state.tracks.filter((t) => t.type === "video");
+        const mainVideoTrackId =
+          state.mainVideoTrackId ??
+          (videoTracks.length === 1
+            ? videoTracks[0].id
+            : (videoTracks[videoTracks.length - 1]?.id ?? null));
+        const candidateSet = candidateTrackIds
+          ? new Set(candidateTrackIds)
+          : null;
+        const nextTracks = state.tracks.filter((track) => {
+          if (track.id === mainVideoTrackId) return true;
+          if (candidateSet && !candidateSet.has(track.id)) return true;
+          return state.clips.some((c) => c.trackId === track.id);
+        });
+        return {
+          tracks: nextTracks,
+          mainVideoTrackId,
+        };
+      });
+    },
+
+    // ═══════════════════════════════════════════════════════════
+    // Gap Operations (First-Class Gap Entities)
+    // ═══════════════════════════════════════════════════════════
+    // GAP OPERATIONS
+    // ⚠️ DEPRECATED: These methods are kept for backwards compatibility only.
+    // Use GapManager for new code to get undo/redo support:
+    //   import { GapManager } from '@/lib/gapManager';
+    //   GapManager.insertGap(trackId, startTime, duration);
+    // ═══════════════════════════════════════════════════════════
+
+    insertGap: (trackId, startTime, duration) => {
+      // Use GapManager.insertGap() for undo/redo support
+
+      const state = get();
+      const track = state.tracks.find((t) => t.id === trackId);
+
+      if (!track || track.locked) {
+        return null;
+      }
+
+      const result = insertGapWithRipple(
+        trackId,
+        startTime,
+        duration,
+        state.clips,
+        state.gaps,
+        "user-insert",
+      );
+
+      if (!result.success || !result.gap) {
+        return null;
+      }
+
+      // Shift affected clips
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          gaps: [...state.gaps, result.gap!],
+          clips: state.clips.map((c) =>
+            result.affectedClipIds!.includes(c.id)
+              ? { ...c, startTime: c.startTime + duration }
+              : c,
+          ),
+        };
+
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+
+        return next;
+      });
+
+      return result.gap;
+    },
+
+    removeGap: (gapId) => {
+      // Use GapManager.removeGap() for undo/redo support
+
+      const state = get();
+      const gap = state.gaps.find((g) => g.id === gapId);
+
+      if (!gap) return;
+
+      const track = state.tracks.find((t) => t.id === gap.trackId);
+      if (track?.locked) return;
+
+      const result = removeGapWithRipple(gap, state.clips, state.gaps);
+
+      if (!result.success) return;
+
+      // Shift affected clips left
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          gaps: state.gaps.filter((g) => g.id !== gapId),
+          clips: state.clips.map((c) =>
+            result.affectedClipIds!.includes(c.id)
+              ? { ...c, startTime: c.startTime - gap.duration }
+              : c,
+          ),
+        };
+
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+
+        return next;
+      });
+    },
+
+    resizeGapDuration: (gapId, newDuration) => {
+      // Use GapManager.resizeGap() for undo/redo support
+
+      const state = get();
+      const gap = state.gaps.find((g) => g.id === gapId);
+
+      if (!gap) return;
+
+      const track = state.tracks.find((t) => t.id === gap.trackId);
+      if (track?.locked) return;
+
+      const result = resizeGap(gap, newDuration, state.clips, state.gaps);
+
+      if (!result.success || !result.gap) return;
+
+      const deltaTime = newDuration - gap.duration;
+
+      // Update gap and shift affected clips
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          gaps: state.gaps.map((g) => (g.id === gapId ? result.gap! : g)),
+          clips: state.clips.map((c) =>
+            result.affectedClipIds!.includes(c.id)
+              ? { ...c, startTime: c.startTime + deltaTime }
+              : c,
+          ),
+        };
+
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+
+        return next;
+      });
+    },
+
+    toggleGapProtection: (gapId) => {
+      // Use GapManager.toggleProtection() for undo/redo support
+
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          gaps: state.gaps.map((g) =>
+            g.id === gapId
+              ? {
+                  ...g,
+                  protected: !g.protected,
+                  type: !g.protected ? "protected" : "manual",
+                }
+              : g,
+          ),
+        };
+
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+
+        return next;
+      });
+    },
+
+    detectAndSyncGaps: (trackId) => {
+      const state = get();
+      const tracksToProcess = trackId
+        ? state.tracks.filter((t) => t.id === trackId)
+        : state.tracks;
+
+      // Start with gaps from tracks we're NOT processing (keep them as-is)
+      const trackIdsToProcess = new Set(tracksToProcess.map((t) => t.id));
+      let newGaps: Gap[] = state.gaps.filter(
+        (g) => !trackIdsToProcess.has(g.trackId),
+      );
+
+      for (const track of tracksToProcess) {
+        const trackClips = state.clips.filter((c) => c.trackId === track.id);
+
+        // Detect all gaps fresh (don't preserve existing)
+        // This ensures gaps always have the correct duration after clip moves
+        const detectedGaps = detectGaps(trackClips, []);
+
+        // Preserve protected gaps (match by position and update duration)
+        const existingProtectedGaps = state.gaps.filter(
+          (g) => g.trackId === track.id && g.protected,
+        );
+
+        // For each protected gap, check if it still exists and update its duration
+        const validProtectedGaps: Gap[] = [];
+        for (const protectedGap of existingProtectedGaps) {
+          // Check if there's a detected gap that overlaps with this protected gap
+          // This ensures the protected gap is preserved (with its ID/protection)
+          // even if it was truncated/shifted (e.g. from the left)
+          const matchingGap = detectedGaps.find((detected) => {
+            const detectedEnd = detected.startTime + detected.duration;
+            const protectedEnd = protectedGap.startTime + protectedGap.duration;
+            const overlapStart = Math.max(
+              detected.startTime,
+              protectedGap.startTime,
+            );
+            const overlapEnd = Math.min(detectedEnd, protectedEnd);
+            return overlapStart < overlapEnd - 0.001; // Overlaps by at least 1ms
+          });
+
+          if (matchingGap) {
+            // Gap still exists - update duration and mark as protected
+            validProtectedGaps.push({
+              ...matchingGap,
+              id: protectedGap.id,
+              protected: true,
+              type: protectedGap.type,
+              metadata: protectedGap.metadata,
+            });
+
+            // Remove from detectedGaps so we don't duplicate it
+            const index = detectedGaps.indexOf(matchingGap);
+            if (index > -1) {
+              detectedGaps.splice(index, 1);
+            }
+          }
+          // If no matching gap, the protected gap was filled by a clip (don't preserve)
+        }
+
+        // Combine valid protected gaps with new detected gaps
+        newGaps = [...newGaps, ...validProtectedGaps, ...detectedGaps];
+      }
+
+      // Merge adjacent auto-detected gaps to reduce visual clutter
+      const mergedGaps = mergeAdjacentGaps(newGaps);
+
+      // Local helper to check if two gaps arrays are equal to avoid unnecessary updates/re-renders
+      const areGapsEqual = (a: Gap[], b: Gap[]): boolean => {
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) {
+          const ga = a[i];
+          const gb = b[i];
+          if (
+            ga.id !== gb.id ||
+            ga.trackId !== gb.trackId ||
+            Math.abs(ga.startTime - gb.startTime) > 0.001 ||
+            Math.abs(ga.duration - gb.duration) > 0.001 ||
+            ga.type !== gb.type ||
+            ga.source !== gb.source ||
+            ga.protected !== gb.protected
+          ) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+      if (!areGapsEqual(state.gaps, mergedGaps)) {
+        set({ gaps: mergedGaps });
+      }
+    },
+
+    packTrackGaps: (trackId) => {
+      // Use GapManager.packTrack() for undo/redo support
+
+      const state = get();
+      const track = state.tracks.find((t) => t.id === trackId);
+
+      if (!track || track.locked) return;
+
+      const result = packTrack(trackId, state.clips, state.gaps);
+
+      // Reposition all clips tightly
+      const trackClips = state.clips
+        .filter((c) => c.trackId === trackId)
+        .sort((a, b) => a.startTime - b.startTime);
+
+      let currentTime = 0;
+      const repositionedClips = new Map<string, number>();
+
+      for (const clip of trackClips) {
+        repositionedClips.set(clip.id, currentTime);
+        currentTime += clip.duration;
+      }
+
+      set((state) => {
+        // Merge remaining gaps from this track with gaps from other tracks
+        const otherTrackGaps = state.gaps.filter((g) => g.trackId !== trackId);
+        const allRemainingGaps = [...otherTrackGaps, ...result.remainingGaps];
+
+        const next: Partial<TimelineStore> = {
+          gaps: allRemainingGaps,
+          clips: state.clips.map((c) =>
+            repositionedClips.has(c.id)
+              ? { ...c, startTime: repositionedClips.get(c.id)! }
+              : c,
+          ),
+        };
+
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+
+        return next;
+      });
+    },
+
+    // ─── Marker actions ──────────────────────────────────────────────────────
+
+    addMarker: (time, name = "Marker", color = "purple") => {
+      const id = generateId("marker");
+      const marker: TimelineMarker = { id, time, name, color };
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          markers: [...state.markers, marker].sort((a, b) => a.time - b.time),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+      return id;
+    },
+
+    removeMarker: (markerId) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          markers: state.markers.filter((m) => m.id !== markerId),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    updateMarker: (markerId, updates) => {
+      set((state) => {
+        const next: Partial<TimelineStore> = {
+          markers: state.markers
+            .map((m) => (m.id === markerId ? { ...m, ...updates } : m))
+            .sort((a, b) => a.time - b.time),
+        };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    addAudioKeyframe: (clipId, time, gain, easing = "linear") => {
+      const id = generateId("akf");
+      set((state) => {
+        const clip = state.clips.find((c) => c.id === clipId);
+        if (!clip) return state;
+
+        const clampedTime = Math.max(0, Math.min(clip.duration, time));
+        const keyframes = clip.volumeKeyframes ? [...clip.volumeKeyframes] : [];
+        const existingIdx = keyframes.findIndex(
+          (kf) => Math.abs(kf.time - clampedTime) < 0.001,
+        );
+
+        if (existingIdx >= 0) {
+          keyframes[existingIdx] = { ...keyframes[existingIdx], gain, easing };
+        } else {
+          keyframes.push({ id, time: clampedTime, gain, easing });
+        }
+        keyframes.sort((a, b) => a.time - b.time);
+
+        const updatedClips = state.clips.map((c) =>
+          c.id === clipId
+            ? {
+                ...c,
+                ...synchronizeClipAudioProperties(c, {
+                  volumeKeyframes: keyframes,
+                }),
+              }
+            : c,
+        );
+        const next: Partial<TimelineStore> = { clips: updatedClips };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+      return id;
+    },
+
+    removeAudioKeyframe: (clipId, keyframeId) => {
+      set((state) => {
+        const clip = state.clips.find((c) => c.id === clipId);
+        if (!clip || !clip.volumeKeyframes) return state;
+
+        const keyframes = clip.volumeKeyframes.filter(
+          (kf) => kf.id !== keyframeId,
+        );
+        const updatedClips = state.clips.map((c) =>
+          c.id === clipId
+            ? {
+                ...c,
+                ...synchronizeClipAudioProperties(c, {
+                  volumeKeyframes: keyframes,
+                }),
+              }
+            : c,
+        );
+        const next: Partial<TimelineStore> = { clips: updatedClips };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    updateAudioKeyframe: (clipId, keyframeId, updates) => {
+      set((state) => {
+        const clip = state.clips.find((c) => c.id === clipId);
+        if (!clip || !clip.volumeKeyframes) return state;
+
+        const keyframes = clip.volumeKeyframes
+          .map((kf) => {
+            if (kf.id !== keyframeId) return kf;
+            const updated = { ...kf, ...updates };
+            if (updated.time !== undefined) {
+              updated.time = Math.max(0, Math.min(clip.duration, updated.time));
+            }
+            return updated;
+          })
+          .sort((a, b) => a.time - b.time);
+
+        const updatedClips = state.clips.map((c) =>
+          c.id === clipId
+            ? {
+                ...c,
+                ...synchronizeClipAudioProperties(c, {
+                  volumeKeyframes: keyframes,
+                }),
+              }
+            : c,
+        );
+        const next: Partial<TimelineStore> = { clips: updatedClips };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    updateClipAudioFX: (clipId, fxUpdates) => {
+      set((state) => {
+        const clip = state.clips.find((c) => c.id === clipId);
+        if (!clip) return state;
+
+        const currentFX = clip.audioFX || {};
+        const newFX = { ...currentFX, ...fxUpdates };
+
+        const updatedClips = state.clips.map((c) =>
+          c.id === clipId
+            ? { ...c, ...synchronizeClipAudioProperties(c, { audioFX: newFX }) }
+            : c,
+        );
+        const next: Partial<TimelineStore> = { clips: updatedClips };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    updateClipChromaKey: (clipId, updates) => {
+      set((state) => {
+        const clip = state.clips.find((c) => c.id === clipId);
+        if (!clip) return state;
+
+        const currentChroma = clip.chromaKey || {
+          enabled: false,
+          keyColor: [0.0, 1.0, 0.0] as [number, number, number],
+          tolerance: 0.25,
+          smoothness: 0.15,
+          despillAmount: 0.85,
+          despillBalance: 0.5,
+          mattePedestal: 0.05,
+          matteHighlight: 0.95,
+        };
+        const newChroma = { ...currentChroma, ...updates };
+
+        const updatedClips = state.clips.map((c) =>
+          c.id === clipId ? { ...c, chromaKey: newChroma } : c,
+        );
+        const next: Partial<TimelineStore> = { clips: updatedClips };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    updateClipColorGrade: (clipId, updates) => {
+      set((state) => {
+        const clip = state.clips.find((c) => c.id === clipId);
+        if (!clip) return state;
+
+        const currentColor = clip.colorGrade || {
+          exposure: 0.0,
+          contrast: 1.0,
+          saturation: 1.0,
+          temperature: 0.0,
+          tint: 0.0,
+          lutIntensity: 1.0,
+          lutSize: 33.0,
+          hasLut: 0,
+        };
+        const newColor = { ...currentColor, ...updates };
+
+        const updatedClips = state.clips.map((c) =>
+          c.id === clipId ? { ...c, colorGrade: newColor } : c,
+        );
+        const next: Partial<TimelineStore> = { clips: updatedClips };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    addClipMarker: (clipId, localTime, name, color) => {
+      const markerId = generateId("clipmarker");
+      set((state) => {
+        const clip = state.clips.find((c) => c.id === clipId);
+        if (!clip) return state;
+
+        const newMarker: import("@/types").ClipMarker = {
+          id: markerId,
+          localTime,
+          name: name || "Clip Marker",
+          color: color || "cyan",
+        };
+
+        const currentMarkers = clip.markers || [];
+        const updatedMarkers = [...currentMarkers, newMarker].sort(
+          (a, b) => a.localTime - b.localTime,
+        );
+        const updatedClips = state.clips.map((c) =>
+          c.id === clipId ? { ...c, markers: updatedMarkers } : c,
+        );
+
+        const next: Partial<TimelineStore> = { clips: updatedClips };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+      return markerId;
+    },
+
+    removeClipMarker: (clipId, markerId) => {
+      set((state) => {
+        const clip = state.clips.find((c) => c.id === clipId);
+        if (!clip || !clip.markers) return state;
+
+        const updatedMarkers = clip.markers.filter((m) => m.id !== markerId);
+        const updatedClips = state.clips.map((c) =>
+          c.id === clipId ? { ...c, markers: updatedMarkers } : c,
+        );
+
+        const next: Partial<TimelineStore> = { clips: updatedClips };
+        if (state._batchDepth > 0) {
+          next._pendingEpochIncrement = true;
+        } else {
+          next.epoch = state.epoch + 1;
+        }
+        return next;
+      });
+    },
+
+    jumpToNextMarker: async () => {
+      const state = get();
+      let currentTime = 0;
+      let playbackClock: any = null;
+
+      try {
+        const { getActiveSession } =
+          await import("@/core/runtime/ProjectSession");
+        const session = getActiveSession();
+        if (session) {
+          playbackClock = session.playback;
+          currentTime = playbackClock.time;
+        }
+      } catch {
+        currentTime = 0;
+      }
+
+      const allTimes: number[] = [...state.markers.map((m) => m.time)];
+      state.clips.forEach((clip) => {
+        if (clip.markers) {
+          clip.markers.forEach((cm) => {
+            const absTime = clip.startTime + cm.localTime;
+            allTimes.push(absTime);
+          });
+        }
+      });
+
+      const nextTimes = allTimes
+        .filter((t) => t > currentTime + 0.01)
+        .sort((a, b) => a - b);
+      if (nextTimes.length > 0 && playbackClock) {
+        playbackClock.setTime(nextTimes[0]);
+      }
+    },
+
+    jumpToPrevMarker: async () => {
+      const state = get();
+      let currentTime = 0;
+      let playbackClock: any = null;
+
+      try {
+        const { getActiveSession } =
+          await import("@/core/runtime/ProjectSession");
+        const session = getActiveSession();
+        if (session) {
+          playbackClock = session.playback;
+          currentTime = playbackClock.time;
+        }
+      } catch {
+        currentTime = 0;
+      }
+
+      const allTimes: number[] = [...state.markers.map((m) => m.time)];
+      state.clips.forEach((clip) => {
+        if (clip.markers) {
+          clip.markers.forEach((cm) => {
+            const absTime = clip.startTime + cm.localTime;
+            allTimes.push(absTime);
+          });
+        }
+      });
+
+      const prevTimes = allTimes
+        .filter((t) => t < currentTime - 0.01)
+        .sort((a, b) => b - a);
+      if (prevTimes.length > 0 && playbackClock) {
+        playbackClock.setTime(prevTimes[0]);
+      }
+    },
+  })),
+);

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>Clypra requires camera access for dual screen + webcam recording.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Clypra requires microphone access for audio recording during screen capture.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Clypra requires screen recording access to capture your screen content.</string>
+</dict>
+</plist>

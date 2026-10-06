@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/clypra.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Clypra - A Premium Video Editor</title>
+
+    <!-- Primary Meta Tags -->
+    <meta name="title" content="Clypra - A Premium Video Editor" />
+    <meta name="description" content="A modern, high-performance video editor engineered using Tauri, React, and Rust. Experience a professional NLE timeline, hardware acceleration, and visual asset pools directly on your machine—with mobile versions coming soon." />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Clypra - A Premium Video Editor" />
+    <meta property="og:description" content="A modern, high-performance video editor engineered using Tauri, React, and Rust. Experience a professional NLE timeline, hardware acceleration, and visual asset pools directly on your machine—with mobile versions coming soon." />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:title" content="Clypra - A Premium Video Editor" />
+    <meta property="twitter:description" content="A modern, high-performance video editor engineered using Tauri, React, and Rust. Experience a professional NLE timeline, hardware acceleration, and visual asset pools directly on your machine—with mobile versions coming soon." />
+    <style>
+      /* Prevent white flash on load - match theme colors */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #0f0f0f;
+        color: #f0f0f0;
+
+        overflow: hidden;
+      }
+
+      /* Loading spinner */
+      #app-loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(100% 120% at 50% 0%, rgba(79, 184, 255, 0.08) 0%, transparent 45%), linear-gradient(180deg, #0f1115 0%, #0e1013 100%);
+        z-index: 9999;
+      }
+
+      #app-loading .spinner {
+        width: 48px;
+        height: 48px;
+        border: 3px solid #242424;
+        border-top-color: #6c63ff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Hide loading when React mounts */
+      #root:not(:empty) ~ #app-loading {
+        display: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <div id="app-loading">
+      <div class="spinner"></div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

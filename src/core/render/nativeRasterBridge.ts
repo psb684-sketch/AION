@@ -1,0 +1,1319 @@
+/**
+ * Native raster bridge
+ *
+ * The native compositor is the rendering authority. Some editor constructs
+ * (Studio text, gradient/shader backgrounds, and Lottie stickers) still need a
+ * DOM-compatible evaluator to produce pixels. This bridge makes those pixels
+ * immutable native raster assets that both preview and export reference by id.
+ * It is deliberately instance-scoped: preview and each export job own a
+ * bounded cache and dispose any Lottie DOM resources when their work ends.
+ */
+
+import type {
+  EvaluatedMediaLayer,
+  EvaluatedScene,
+} from "@/core/evaluation/types";
+import { drawCanvasBackground } from "@/core/render/canvasBackground";
+import { SmartOverlayRenderer } from "@/features/smart-overlays/renderer/SmartOverlayRenderer";
+import type { SmartOverlayClip } from "@/types/smartOverlay";
+import {
+  isTauriRuntime,
+  registerNativeImageAsset,
+  registerNativeRasterAsset,
+  unregisterNativeRasterAsset,
+} from "@/lib/platform/tauri";
+import type { NativeRasterLayerSnapshot } from "@/lib/platform/nativeCore";
+import { buildNativeImageAssetId } from "@/core/render/nativeRasterAssetIds";
+import {
+  buildNativeTextRasterKey,
+  rasterizeTextLayerForNative,
+  type NativeTextRasterAsset,
+} from "@/components/editor/preview/nativeTextPreview";
+import { normalizeFontSize } from "@/lib/utils/fixedSizing";
+import {
+  traceTextRenderTiming,
+  type TextRenderTracePhase,
+} from "@/core/render/textRenderTrace";
+import type { TelemetryStickerPhase } from "@/services/telemetryCollector";
+import { LatestTextPreparationScheduler } from "@/core/render/latestTextPreparationScheduler";
+import type { NativeAnimatedStickerRaster } from "@/components/editor/preview/nativeStickerPreview";
+import { StickerRasterizerWorkerClient } from "@/core/render/stickerRasterizerWorkerClient";
+import {
+  recordRendererByClipKind,
+  recordAnimationAchievedFrame,
+} from "@/lib/playback/textMetrics";
+import { TemplateRasterizerWorkerClient } from "@/core/render/templateRasterizerWorkerClient";
+
+type UploadableNativeRaster = NativeRasterLayerSnapshot & {
+  /**
+   * Pixel data as Uint8ClampedArray (from rasterizeTextLayerForNative) or
+   * number[] (from Canvas image data / gradient rasterizer).
+   */
+  rgba?: Uint8ClampedArray | number[];
+  /** Text-only metadata used to reapply current compositor placement. */
+  bleedX?: number;
+  bleedY?: number;
+  positionMode?: "centered" | "absolute";
+  timing?: NativeTextRasterAsset["timing"];
+};
+
+export interface NativeRasterBridgeOptions {
+  frameKey: number;
+  phase?: TextRenderTracePhase;
+  /**
+   * Playback is a real-time stream. Cold text assets must never make the
+   * visible frame wait for font loading, Canvas rasterization, or readback.
+   * Paused/seeked renders leave this false so the requested frame is exact.
+   */
+  nonBlockingText?: boolean;
+  /**
+   * Playback must not block on sticker Lottie evaluation or worker rasterization.
+   * When true, uses latest prepared snapshot while worker computes in background.
+   */
+  nonBlockingStickers?: boolean;
+}
+
+const MAX_TEXT_CACHE_ENTRIES = 96;
+const MAX_REGISTERED_ASSETS = 256;
+const PLAYBACK_TEXT_OBSERVATION_INTERVAL_MS = 250;
+// Animated templates and effect scenes can be far more expensive than a frame
+// budget on integrated GPUs. During live playback retain the newest completed
+// raster and refresh it at most ten times per second, rather than keeping a
+// worker fully saturated with revisions viewers can never see.
+const PLAYBACK_TEXT_PREPARATION_COOLDOWN_MS = 100;
+
+function evictOldest<TKey, TValue>(
+  cache: Map<TKey, TValue>,
+  maxEntries: number,
+): void {
+  while (cache.size > maxEntries) {
+    const oldestKey = cache.keys().next().value as TKey | undefined;
+    if (oldestKey === undefined) return;
+    cache.delete(oldestKey);
+  }
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function snapshot(asset: UploadableNativeRaster): NativeRasterLayerSnapshot {
+  const {
+    rgba: _rgba,
+    bleedX: _bleedX,
+    bleedY: _bleedY,
+    positionMode: _positionMode,
+    timing: _timing,
+    ...reference
+  } = asset;
+  return reference;
+}
+
+type NativeTextLayer = Parameters<typeof buildNativeTextRasterKey>[0];
+type TextPreparationInput = {
+  layer: NativeTextLayer;
+  key: string;
+  phase: TextRenderTracePhase;
+  generation: number;
+};
+
+type StickerPreparationInput = {
+  layer: EvaluatedMediaLayer;
+  key: string;
+  phase: TelemetryStickerPhase;
+};
+
+function textKind(layer: NativeTextLayer): "plain" | "effect" | "template" {
+  return layer.templateId || layer.clipKind === "text-template"
+    ? "template"
+    : layer.styleId
+      ? "effect"
+      : "plain";
+}
+
+/**
+ * Produces and registers all raster assets that can be derived from an
+ * EvaluatedScene alone. Unsupported raster sources remain explicit native
+ * contract failures rather than falling back to the browser compositor.
+ */
+export class NativeRasterBridge {
+  private readonly textCache = new Map<
+    string,
+    Promise<NativeTextRasterAsset>
+  >();
+  /** Last registered frame per layer, used as a non-blocking playback fallback. */
+  private readonly textSnapshotsByLayerId = new Map<
+    string,
+    NativeRasterLayerSnapshot
+  >();
+  private readonly textSnapshotKeysByLayerId = new Map<string, string>();
+  private readonly lastTextPlaybackObservationAtByLayerId = new Map<
+    string,
+    number
+  >();
+  /**
+   * Bleed and position-mode metadata stripped by snapshot() but needed to
+   * recompute placement from current layer coordinates in the non-blocking path.
+   */
+  private readonly textSnapshotBleedByLayerId = new Map<
+    string,
+    {
+      bleedX: number;
+      bleedY: number;
+      positionMode: "centered" | "absolute";
+      baseWidth?: number;
+      baseHeight?: number;
+    }
+  >();
+  private readonly imageCache = new Map<string, Promise<void>>();
+  private readonly imageSourcesById = new Map<
+    string,
+    { sourcePath: string; width: number; height: number }
+  >();
+  private readonly assetsById = new Map<string, UploadableNativeRaster>();
+  private readonly textAssetsById = new Map<string, UploadableNativeRaster>();
+  private readonly registeredAssetIds = new Set<string>();
+  /**
+   * Reference-equality cache for smart-overlay stableSerialize.
+   * stableSerialize does a full recursive deep serialization on every call.
+   * Since Zustand updates are immutable, the activeClips array reference only
+   * changes when the user edits a clip — not on every playback frame. Caching
+   * the last serialized string against the last array reference avoids O(fields)
+   * string concatenation every frame when clips haven't changed.
+   */
+  private _lastSmartOverlayClipsRef: readonly unknown[] | null = null;
+  private _lastSmartOverlayClipsSerial = "";
+  private readonly animatedStickerRenderer =
+    new StickerRasterizerWorkerClient();
+  private readonly stickerSnapshotsByLayerId = new Map<
+    string,
+    NativeRasterLayerSnapshot
+  >();
+  private readonly stickerSnapshotKeysByLayerId = new Map<string, string>();
+  private readonly stickerPreparationScheduler =
+    new LatestTextPreparationScheduler<StickerPreparationInput>(
+      (input) => this.prepareStickerAsset(input),
+      (error, input) =>
+        console.error("[NativeRasterBridge] background sticker frame failed", {
+          layerId: input.layer.layerId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+    );
+  private textPreparationGeneration = 0;
+  /** One active raster plus one latest replacement for real-time playback. */
+  private readonly textPreparationScheduler =
+    new LatestTextPreparationScheduler<TextPreparationInput>(
+      (input) => this.prepareTextAsset(input),
+      (error, input) =>
+        console.error("[NativeRasterBridge] background text frame failed", {
+          layerId: input.layer.layerId,
+          templateId: input.layer.templateId,
+          revisionId: input.layer.templateRevisionId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      { cooldownMs: PLAYBACK_TEXT_PREPARATION_COOLDOWN_MS },
+    );
+  /**
+   * Off-thread renderer for animated text templates.
+   * Routes renderTextTemplateToCanvas to a Worker via OffscreenCanvas so the
+   * main JS thread is never blocked by template pixel generation.
+   */
+  private readonly templateRasterizerWorkerClient =
+    new TemplateRasterizerWorkerClient();
+
+  async rasterize(
+    scene: EvaluatedScene,
+    options: NativeRasterBridgeOptions,
+  ): Promise<NativeRasterLayerSnapshot[]> {
+    if (!isTauriRuntime()) return [];
+
+    const hasVisualLayers =
+      Array.isArray(scene.visualLayers) && scene.visualLayers.length > 0;
+    const bg = scene.metadata?.canvasBackground;
+    const hasComplexBg = Boolean(
+      bg &&
+      !bg.isTransparent &&
+      bg.type !== "solid" &&
+      (bg.type === "gradient" || bg.type === "shader"),
+    );
+
+    if (!hasVisualLayers && !hasComplexBg) {
+      return [];
+    }
+
+    // Studio text effects are authored and evaluated by the shared Canvas engine.
+    // Keep those pixels intact and let native own only final composition; the
+    // native SDF path remains a compatibility fallback for frames that cannot
+    // be rasterized in the WebView.
+    const [text, background, animatedStickers, images] = await Promise.all([
+      hasVisualLayers
+        ? this.rasterizeText(
+            scene,
+            options.phase ?? "visible-playback",
+            options.nonBlockingText === true,
+          )
+        : Promise.resolve([]),
+      hasComplexBg
+        ? this.rasterizeBackground(scene, options.frameKey)
+        : Promise.resolve([]),
+      hasVisualLayers
+        ? this.rasterizeAnimatedStickers(
+            scene,
+            (options.phase as TelemetryStickerPhase) ?? "visible-playback",
+            options.nonBlockingStickers ?? options.nonBlockingText ?? false,
+          )
+        : Promise.resolve([]),
+      hasVisualLayers ? this.rasterizeImages(scene) : Promise.resolve([]),
+    ]);
+    return [...background, ...text, ...animatedStickers, ...images];
+  }
+
+  /**
+   * Warm only the text path for an upcoming timeline boundary. This is kept
+   * separate from `rasterize` so playback can prepare a font/effect without
+   * also decoding or uploading unrelated media for a frame that is not yet
+   * visible.
+   */
+  async prewarmTextAssets(
+    scene: EvaluatedScene,
+    phase: TextRenderTracePhase = "text-prefetch",
+  ): Promise<void> {
+    if (!isTauriRuntime()) return;
+    // Timeline-boundary prefetch runs alongside playback. Route it through the
+    // same latest-only scheduler so it cannot bypass the interactive budget.
+    // Session prewarm remains exact: it happens before a clip is needed.
+    await this.rasterizeText(scene, phase, phase === "text-prefetch");
+  }
+
+  /**
+   * Register still-image assets before they become visible. Image decoding is
+   * native-owned, so doing this during session initialization prevents the
+   * first image boundary from competing with the playback presenter.
+   */
+  async prewarmImageAssets(scene: EvaluatedScene): Promise<void> {
+    if (!isTauriRuntime()) return;
+    await this.rasterizeImages(scene);
+  }
+
+  /**
+   * Smart overlays are evaluated as timeline entities rather than visual scene
+   * layers. Keep that distinction explicit while giving preview and export the
+   * same native raster representation.
+   */
+  async rasterizeSmartOverlays(
+    activeClips: SmartOverlayClip[],
+    time: number,
+    width: number,
+    height: number,
+    options: NativeRasterBridgeOptions,
+  ): Promise<NativeRasterLayerSnapshot[]> {
+    if (!isTauriRuntime() || activeClips.length === 0) return [];
+    if (typeof document === "undefined") {
+      throw new Error(
+        "Native smart-overlay rasterization requires a canvas-capable desktop runtime",
+      );
+    }
+
+    const rasterWidth = Math.max(1, Math.round(width));
+    const rasterHeight = Math.max(1, Math.round(height));
+    // The rendered pixels are time-dependent, so this cache is intentionally
+    // frame-addressed. The preview scheduler is responsible for ensuring that
+    // only the newest playback frame reaches this method; callers must not
+    // turn this into an unbounded background queue.
+    //
+    // Reference-equality check: stableSerialize does full recursive object
+    // serialization. Since Zustand clips are immutable, the array reference
+    // only changes on edits — not every frame. Reuse the last serial string
+    // when the reference is identical to avoid per-frame string allocation.
+    let clipsSerial: string;
+    if (
+      activeClips === (this._lastSmartOverlayClipsRef as typeof activeClips)
+    ) {
+      clipsSerial = this._lastSmartOverlayClipsSerial;
+    } else {
+      clipsSerial = stableSerialize(activeClips);
+      this._lastSmartOverlayClipsRef = activeClips;
+      this._lastSmartOverlayClipsSerial = clipsSerial;
+    }
+    const assetId = `native-smart-overlay:${options.frameKey}:${clipsSerial}`;
+    const existing = this.assetsById.get(assetId);
+    if (existing) {
+      await this.register(existing);
+      return [snapshot(existing)];
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = rasterWidth;
+    canvas.height = rasterHeight;
+    const context = canvas.getContext("2d");
+    if (!context)
+      throw new Error(
+        "Unable to create a 2D context for native smart-overlay rasterization",
+      );
+    context.clearRect(0, 0, rasterWidth, rasterHeight);
+    for (const clip of activeClips) {
+      new SmartOverlayRenderer(clip).draw(
+        context,
+        time - clip.startTime,
+        rasterWidth,
+        rasterHeight,
+      );
+    }
+
+    // Keep as Uint8ClampedArray — avoids the O(W×H) Array.from() copy.
+    // registerNativeRasterAsset converts to number[] at the Tauri IPC boundary.
+    const rgba = context.getImageData(0, 0, rasterWidth, rasterHeight).data;
+    // Check whether any pixel has non-zero alpha (every 4th byte starting at index 3).
+    let hasVisiblePixels = false;
+    for (let i = 3; i < rgba.length; i += 4) {
+      if (rgba[i] > 0) {
+        hasVisiblePixels = true;
+        break;
+      }
+    }
+    if (!hasVisiblePixels) return [];
+    const asset: UploadableNativeRaster = {
+      assetId,
+      rgba,
+      width: rasterWidth,
+      height: rasterHeight,
+      x: 0,
+      y: 0,
+      rotation: 0,
+      opacity: 1,
+      zIndex: 1_000_000,
+      blendMode: "normal",
+      isText: false,
+    };
+    await this.register(asset);
+    return [snapshot(asset)];
+  }
+
+  /** Re-upload request assets after native device/cache recovery. */
+  async reregister(references: NativeRasterLayerSnapshot[]): Promise<boolean> {
+    const registrations = await Promise.all(
+      references.map(async (reference) => {
+        const imageSource = this.imageSourcesById.get(reference.assetId);
+        if (imageSource) {
+          await registerNativeImageAsset({
+            assetId: reference.assetId,
+            ...imageSource,
+          });
+          this.registeredAssetIds.add(reference.assetId);
+          return true;
+        }
+
+        let asset =
+          this.textAssetsById.get(reference.assetId) ??
+          this.assetsById.get(reference.assetId);
+
+        if (!asset && reference.assetId.startsWith("native-text:")) {
+          for (const promise of this.textCache.values()) {
+            try {
+              const cached = await promise;
+              if (
+                cached &&
+                cached.assetId === reference.assetId &&
+                cached.rgba &&
+                cached.rgba.length > 0
+              ) {
+                asset = {
+                  ...cached,
+                  isText: true,
+                };
+                this.textAssetsById.set(reference.assetId, asset);
+                break;
+              }
+            } catch {
+              // Ignore failed promises in textCache
+            }
+          }
+        }
+
+        if (asset && asset.rgba && asset.rgba.length > 0) {
+          await this.register(asset, true);
+          return true;
+        }
+        return false;
+      }),
+    );
+    return registrations.every(Boolean);
+  }
+
+  /** Handle out-of-band GPU cache eviction events from Rust compositor. */
+  evict(assetIds: string[]): void {
+    for (const assetId of assetIds) {
+      this.registeredAssetIds.delete(assetId);
+      this.animatedStickerRenderer.evictFrame(assetId);
+      this.assetsById.delete(assetId);
+      this.textAssetsById.delete(assetId);
+      this.imageCache.delete(assetId);
+      this.imageSourcesById.delete(assetId);
+
+      for (const [layerId, snap] of this.textSnapshotsByLayerId.entries()) {
+        if (snap.assetId === assetId) {
+          this.textSnapshotsByLayerId.delete(layerId);
+          this.textSnapshotKeysByLayerId.delete(layerId);
+          this.textSnapshotBleedByLayerId.delete(layerId);
+          this.lastTextPlaybackObservationAtByLayerId.delete(layerId);
+        }
+      }
+
+      for (const [layerId, snap] of this.stickerSnapshotsByLayerId.entries()) {
+        if (snap.assetId === assetId) {
+          this.stickerSnapshotsByLayerId.delete(layerId);
+          this.stickerSnapshotKeysByLayerId.delete(layerId);
+        }
+      }
+    }
+  }
+
+  /**
+   * Invalidate and purge all raster assets for a given source file path or asset identity.
+   * Immediately reclaims GPU VRAM and JS memory (NLE-style media invalidation).
+   */
+  async invalidateMediaAsset(sourcePath: string): Promise<void> {
+    if (!sourcePath) return;
+    const normalized = sourcePath.trim().toLowerCase();
+    const assetIdsToEvict: string[] = [];
+
+    for (const [assetId, info] of this.imageSourcesById.entries()) {
+      const infoPath = info.sourcePath?.trim().toLowerCase() || "";
+      if (infoPath === normalized || infoPath.endsWith(normalized) || normalized.endsWith(infoPath)) {
+        assetIdsToEvict.push(assetId);
+      }
+    }
+
+    for (const assetId of assetIdsToEvict) {
+      this.imageCache.delete(assetId);
+      this.imageSourcesById.delete(assetId);
+      this.registeredAssetIds.delete(assetId);
+      this.assetsById.delete(assetId);
+
+      if (isTauriRuntime()) {
+        try {
+          await unregisterNativeRasterAsset(assetId);
+        } catch {
+          // Non-fatal if native runtime is not active
+        }
+      }
+    }
+  }
+
+  dispose(): void {
+    this.textPreparationGeneration += 1;
+    this.textPreparationScheduler.dispose();
+    this.templateRasterizerWorkerClient.dispose();
+    this.textCache.clear();
+    this.textSnapshotsByLayerId.clear();
+    this.textSnapshotKeysByLayerId.clear();
+    this.textSnapshotBleedByLayerId.clear();
+    this.lastTextPlaybackObservationAtByLayerId.clear();
+    this.imageCache.clear();
+    this.imageSourcesById.clear();
+    this.assetsById.clear();
+    this.textAssetsById.clear();
+    this.registeredAssetIds.clear();
+    this.stickerPreparationScheduler.dispose();
+    this.stickerSnapshotsByLayerId.clear();
+    this.stickerSnapshotKeysByLayerId.clear();
+    this.animatedStickerRenderer.dispose();
+  }
+
+  /**
+   * Retrieves the latest raster snapshot for a text or template layer,
+   * including its rendered position (x, y) and display dimensions.
+   */
+  public getTextSnapshot(
+    layerId: string,
+  ): NativeRasterLayerSnapshot | undefined {
+    return this.textSnapshotsByLayerId.get(layerId);
+  }
+
+  private async rasterizeText(
+    scene: EvaluatedScene,
+    phase: TextRenderTracePhase,
+    nonBlocking: boolean,
+  ): Promise<NativeRasterLayerSnapshot[]> {
+    const layers = scene.visualLayers.filter(
+      (layer) => layer.layerType === "text",
+    );
+    if (layers.length === 0) return [];
+
+    if (
+      nonBlocking &&
+      (phase === "visible-playback" || phase === "text-prefetch")
+    ) {
+      const results: NativeRasterLayerSnapshot[] = [];
+      for (const layer of layers) {
+        const key = buildNativeTextRasterKey(layer);
+        const previous = this.textSnapshotsByLayerId.get(layer.layerId);
+        const hasCurrentSnapshot =
+          this.textSnapshotKeysByLayerId.get(layer.layerId) === key;
+        const now = Date.now();
+        const lastObservationAt =
+          this.lastTextPlaybackObservationAtByLayerId.get(layer.layerId) ?? 0;
+        if (
+          (hasCurrentSnapshot || previous) &&
+          now - lastObservationAt >= PLAYBACK_TEXT_OBSERVATION_INTERVAL_MS
+        ) {
+          this.lastTextPlaybackObservationAtByLayerId.set(layer.layerId, now);
+          traceTextRenderTiming({
+            phase,
+            kind: textKind(layer),
+            rendererPath: "native-raster",
+            assetId: previous?.assetId,
+            layerId: layer.layerId,
+            fontFamily: layer.fontFamily,
+            fontWaitMs: 0,
+            rasterMs: 0,
+            readbackMs: 0,
+            transferMs: 0,
+            paintMs: 0,
+            outputPixels: previous ? previous.width * previous.height : 0,
+            cacheHit: Boolean(previous),
+            totalMs: 0,
+            operation: layer.animationOperation ?? "render",
+            contentLength: layer.text.length,
+            lineCount: layer.text.split(/\r?\n/).length,
+            layoutWidth: layer.width,
+            layoutHeight: layer.height,
+          });
+        }
+
+        if (!hasCurrentSnapshot) {
+          this.textPreparationScheduler.enqueue(key, {
+            layer,
+            key,
+            phase,
+            generation: this.textPreparationGeneration,
+          });
+        }
+
+        if (previous) {
+          const bleed = this.textSnapshotBleedByLayerId.get(layer.layerId);
+          const texW = previous.width;
+          const texH = previous.height;
+          const isTemplate =
+            layer.clipKind === "text-template" || Boolean(layer.templateId);
+          const isEffect = Boolean(layer.styleId);
+          const isTemplateOrEffect = isTemplate || isEffect;
+          const isContentBoundedTemplate =
+            isTemplate && !bleed?.bleedX && !bleed?.bleedY;
+          const baseW = isContentBoundedTemplate
+            ? (layer as { baseWidth?: number }).baseWidth || texW
+            : bleed?.baseWidth ?? (layer as { baseWidth?: number }).baseWidth ?? layer.width;
+          const baseH = isContentBoundedTemplate
+            ? (layer as { baseHeight?: number }).baseHeight || texH
+            : bleed?.baseHeight ?? (layer as { baseHeight?: number }).baseHeight ?? layer.height;
+          const scaleX = baseW > 0 ? layer.width / baseW : 1;
+          const scaleY = baseH > 0 ? layer.height / baseH : 1;
+          const displayWidth = isContentBoundedTemplate
+            ? layer.width
+            : texW * scaleX;
+          const displayHeight = isContentBoundedTemplate
+            ? layer.height
+            : texH * scaleY;
+          const updatedSnapshot: NativeRasterLayerSnapshot = {
+            ...previous,
+            displayWidth,
+            displayHeight,
+            x:
+              bleed?.positionMode === "absolute"
+                ? isTemplateOrEffect && typeof layer.x === "number"
+                  ? layer.x + (bleed.bleedX ?? 0) * scaleX
+                  : previous.x
+                : typeof layer.x === "number"
+                  ? layer.x + (layer.width - displayWidth) / 2
+                  : previous.x,
+            y:
+              bleed?.positionMode === "absolute"
+                ? isTemplateOrEffect && typeof layer.y === "number"
+                  ? layer.y + (bleed.bleedY ?? 0) * scaleY
+                  : previous.y
+                : typeof layer.y === "number"
+                  ? layer.y + (layer.height - displayHeight) / 2
+                  : previous.y,
+            rotation:
+              typeof layer.rotation === "number"
+                ? layer.rotation
+                : previous.rotation,
+            opacity:
+              typeof layer.opacity === "number"
+                ? layer.opacity
+                : previous.opacity,
+            zIndex:
+              typeof layer.zIndex === "number" ? layer.zIndex : previous.zIndex,
+            blendMode:
+              typeof layer.blendMode === "string"
+                ? layer.blendMode
+                : previous.blendMode,
+          };
+          this.textSnapshotsByLayerId.set(layer.layerId, updatedSnapshot);
+          results.push(updatedSnapshot);
+        }
+      }
+      return results;
+    }
+
+    const pendingAssets = layers.map(async (layer) => {
+      const key = buildNativeTextRasterKey(layer);
+      const asset = await this.getTextRaster(layer, key, phase);
+      // Pixels are immutable; placement is not. Entry/leave motion and
+      // opacity must be expressed as native compositor uniforms instead of
+      // causing a new Canvas raster and GPU upload every frame.
+      // Compute display dimensions from animation scale so the GPU quad
+      // scales the immutable texture rather than triggering re-rasterization.
+      const texW = asset.width;
+      const texH = asset.height;
+      const isTemplate =
+        layer.clipKind === "text-template" || Boolean(layer.templateId);
+      const isEffect = Boolean(layer.styleId);
+      const isTemplateOrEffect = isTemplate || isEffect;
+      const isContentBoundedTemplate =
+        isTemplate && !asset.bleedX && !asset.bleedY;
+      const baseW = isContentBoundedTemplate
+        ? (layer as { baseWidth?: number }).baseWidth || texW
+        : (layer as { baseWidth?: number }).baseWidth ?? layer.width;
+      const baseH = isContentBoundedTemplate
+        ? (layer as { baseHeight?: number }).baseHeight || texH
+        : (layer as { baseHeight?: number }).baseHeight ?? layer.height;
+      const scaleX = baseW > 0 ? layer.width / baseW : 1;
+      const scaleY = baseH > 0 ? layer.height / baseH : 1;
+      const displayWidth = isContentBoundedTemplate
+        ? layer.width
+        : texW * scaleX;
+      const displayHeight = isContentBoundedTemplate
+        ? layer.height
+        : texH * scaleY;
+      const positioned = {
+        ...asset,
+        displayWidth,
+        displayHeight,
+        x:
+          asset.positionMode === "absolute"
+            ? isTemplateOrEffect && typeof layer.x === "number"
+              ? layer.x + (asset.bleedX ?? 0) * scaleX
+              : asset.x
+            : typeof layer.x === "number"
+              ? layer.x + (layer.width - displayWidth) / 2
+              : asset.x,
+        y:
+          asset.positionMode === "absolute"
+            ? isTemplateOrEffect && typeof layer.y === "number"
+              ? layer.y + (asset.bleedY ?? 0) * scaleY
+              : asset.y
+            : typeof layer.y === "number"
+              ? layer.y + (layer.height - displayHeight) / 2
+              : asset.y,
+        rotation:
+          typeof layer.rotation === "number" ? layer.rotation : asset.rotation,
+        opacity:
+          typeof layer.opacity === "number" ? layer.opacity : asset.opacity,
+        zIndex: typeof layer.zIndex === "number" ? layer.zIndex : asset.zIndex,
+        blendMode:
+          typeof layer.blendMode === "string"
+            ? layer.blendMode
+            : asset.blendMode,
+      };
+      await this.register(positioned);
+      const result = snapshot(positioned);
+      this.textSnapshotsByLayerId.set(layer.layerId, result);
+      // if (layer.clipKind === "text-template" || Boolean(layer.templateId)) {
+      //   console.log("[NativeRasterBridge:TemplateSnapshotRegistered]", {
+      //     layerId: layer.layerId,
+      //     x: result.x,
+      //     y: result.y,
+      //     displayWidth: result.displayWidth,
+      //     displayHeight: result.displayHeight,
+      //     positionMode: asset.positionMode,
+      //     texWidth: asset.width,
+      //     texHeight: asset.height,
+      //   });
+      // }
+      this.textSnapshotKeysByLayerId.set(layer.layerId, key);
+      this.textSnapshotBleedByLayerId.set(layer.layerId, {
+        bleedX: asset.bleedX ?? 0,
+        bleedY: asset.bleedY ?? 0,
+        positionMode: asset.positionMode ?? "centered",
+        baseWidth: (layer as { baseWidth?: number }).baseWidth ?? layer.width,
+        baseHeight: (layer as { baseHeight?: number }).baseHeight ?? layer.height,
+      });
+      return positioned;
+    });
+
+    // Keep a single unsupported/malformed text layer from taking down the
+    // complete native frame. Its absence intentionally selects the native
+    // text snapshot fallback in buildNativeVideoProjectRequest.
+    const rasterResults = await Promise.allSettled(pendingAssets);
+    const assets: UploadableNativeRaster[] = [];
+    for (const result of rasterResults) {
+      if (result.status === "fulfilled") {
+        assets.push(result.value);
+      } else {
+        console.error(
+          "[NativeRasterBridge] text-layer-raster-failed",
+          result.reason,
+        );
+      }
+    }
+
+    return assets.map((asset) => snapshot(asset));
+  }
+
+  private getTextRaster(
+    layer: NativeTextLayer,
+    key: string,
+    phase: TextRenderTracePhase,
+  ): Promise<NativeTextRasterAsset> {
+    let raster = this.textCache.get(key);
+    if (!raster) {
+      raster = this._buildTextRaster(layer, key, phase);
+      this.textCache.set(key, raster);
+      evictOldest(this.textCache, MAX_TEXT_CACHE_ENTRIES);
+      void raster.catch(() => {
+        if (this.textCache.get(key) === raster) this.textCache.delete(key);
+      });
+    }
+    return raster;
+  }
+
+  private async _buildTextRaster(
+    layer: NativeTextLayer,
+    key: string,
+    phase: TextRenderTracePhase,
+  ): Promise<NativeTextRasterAsset> {
+    const isTemplate =
+      Boolean(layer.templateId) || layer.clipKind === "text-template";
+
+    // ── Templates: always off-thread ─────────────────────────────────────────
+    if (isTemplate) {
+      try {
+        const asset = await this.templateRasterizerWorkerClient.rasterize(
+          layer,
+          key,
+          phase,
+        );
+        recordRendererByClipKind(textKind(layer), "worker-template");
+        return asset;
+      } catch (err) {
+        console.warn(
+          `[NativeRasterBridge] Worker template rasterize failed for ${layer.layerId}, falling back to main-thread:`,
+          err,
+        );
+        recordRendererByClipKind(textKind(layer), "canvas-2d-fallback");
+        return rasterizeTextLayerForNative(layer, { phase });
+      }
+    }
+
+    // ── Styled effects with a resolved definition: off-thread ─────────────────
+    // The main thread resolves and prepares the scene document synchronously
+    // (pure data transformation, no async) then sends it to the worker.
+    // The cold path (definition not yet cached → store fetch + epoch increment)
+    // falls through to the main-thread rasterizer below — it's rare and already
+    // triggers a full re-evaluation cycle.
+    if (layer.styleId && layer.styleDefinition) {
+      const effectDef = layer.styleDefinition as any;
+      // Only the canonical scene path (effectDef.scene.effectLayers) is
+      // delegated off-thread. The _buildConfig legacy path is CPU-light
+      // (no complex animation) and stays on the main thread for simplicity.
+      if (effectDef?.scene?.effectLayers) {
+        try {
+          const canonicalScene = JSON.parse(
+            JSON.stringify(effectDef.scene),
+          ) as Record<string, unknown>;
+          const canvas = canonicalScene.canvas as any;
+          const authoredWidth = Math.max(
+            1,
+            Math.ceil(Number(canvas?.width) || 800),
+          );
+          const authoredHeight = Math.max(
+            1,
+            Math.ceil(Number(canvas?.height) || 200),
+          );
+          const unscaledFontSize = normalizeFontSize(layer.fontSize);
+          const evalWidth = Math.max(
+            authoredWidth,
+            Math.ceil(layer.width + 400),
+          );
+          const evalHeight = Math.max(
+            authoredHeight,
+            Math.ceil(layer.height + 200),
+          );
+          // Inject current layer's text and typography into the scene.
+          const sceneText = canonicalScene.text as any;
+          if (sceneText) {
+            sceneText.content = layer.text;
+            sceneText.fontSize = unscaledFontSize;
+            sceneText.fontFamily = layer.fontFamily || sceneText.fontFamily;
+            sceneText.fontWeight = layer.fontWeight ?? sceneText.fontWeight;
+            sceneText.fontStyle = layer.fontStyle ?? sceneText.fontStyle;
+            sceneText.letterSpacing =
+              layer.letterSpacing ?? sceneText.letterSpacing;
+            sceneText.lineHeight = layer.lineHeight ?? sceneText.lineHeight;
+            sceneText.textPosX = layer.textAlign || sceneText.textPosX;
+            sceneText.textPosY =
+              layer.verticalAlign === "middle"
+                ? "middle"
+                : layer.verticalAlign || sceneText.textPosY;
+          }
+          (canonicalScene.canvas as any) = {
+            ...canvas,
+            width: evalWidth,
+            height: evalHeight,
+          };
+          const asset = await this.templateRasterizerWorkerClient.rasterizeEffect(
+            layer,
+            canonicalScene,
+            evalWidth,
+            evalHeight,
+            key,
+            phase,
+          );
+          recordRendererByClipKind(textKind(layer), "worker-effect");
+          return asset;
+        } catch (err) {
+          console.warn(
+            `[NativeRasterBridge] Worker effect rasterize failed for ${layer.layerId}, falling back to main-thread:`,
+            err,
+          );
+          recordRendererByClipKind(textKind(layer), "canvas-2d-fallback");
+        }
+      }
+    }
+
+    // ── Plain text + legacy effects + cold definition path: main thread ────────
+    recordRendererByClipKind(textKind(layer), "canvas-2d");
+    return rasterizeTextLayerForNative(layer, { phase });
+  }
+
+  private async prepareTextAsset(input: TextPreparationInput): Promise<void> {
+    if (
+      input.layer.animationOperation === "animation" ||
+      input.layer.time !== undefined
+    ) {
+      recordAnimationAchievedFrame(input.layer.layerId);
+    }
+    const asset = await this.getTextRaster(input.layer, input.key, input.phase);
+    if (input.generation !== this.textPreparationGeneration) return;
+    await this.register(asset);
+    if (input.generation !== this.textPreparationGeneration) return;
+    const isTemplate =
+      input.layer.clipKind === "text-template" ||
+      Boolean(input.layer.templateId);
+    const isEffect = Boolean(input.layer.styleId);
+    const isTemplateOrEffect = isTemplate || isEffect;
+    const isContentBoundedTemplate =
+      isTemplate && !asset.bleedX && !asset.bleedY;
+    const baseW = isContentBoundedTemplate
+      ? (input.layer as { baseWidth?: number }).baseWidth || asset.width
+      : (input.layer as { baseWidth?: number }).baseWidth ??
+        input.layer.width;
+    const baseH = isContentBoundedTemplate
+      ? (input.layer as { baseHeight?: number }).baseHeight || asset.height
+      : (input.layer as { baseHeight?: number }).baseHeight ??
+        input.layer.height;
+    const scaleX = baseW > 0 ? input.layer.width / baseW : 1;
+    const scaleY = baseH > 0 ? input.layer.height / baseH : 1;
+    const displayWidth = isContentBoundedTemplate
+      ? input.layer.width
+      : asset.width * scaleX;
+    const displayHeight = isContentBoundedTemplate
+      ? input.layer.height
+      : asset.height * scaleY;
+
+    const positioned = {
+      ...asset,
+      displayWidth,
+      displayHeight,
+      x: (() => {
+        if (asset.positionMode === "absolute") {
+          return isTemplateOrEffect && typeof input.layer.x === "number"
+            ? input.layer.x + (asset.bleedX ?? 0) * scaleX
+            : asset.x;
+        }
+        if (typeof input.layer.x !== "number") return asset.x;
+        return input.layer.x + (input.layer.width - displayWidth) / 2;
+      })(),
+      y: (() => {
+        if (asset.positionMode === "absolute") {
+          return isTemplateOrEffect && typeof input.layer.y === "number"
+            ? input.layer.y + (asset.bleedY ?? 0) * scaleY
+            : asset.y;
+        }
+        if (typeof input.layer.y !== "number") return asset.y;
+        return input.layer.y + (input.layer.height - displayHeight) / 2;
+      })(),
+      rotation:
+        typeof input.layer.rotation === "number"
+          ? input.layer.rotation
+          : asset.rotation,
+      opacity:
+        typeof input.layer.opacity === "number"
+          ? input.layer.opacity
+          : asset.opacity,
+      zIndex:
+        typeof input.layer.zIndex === "number"
+          ? input.layer.zIndex
+          : asset.zIndex,
+      blendMode:
+        typeof input.layer.blendMode === "string"
+          ? input.layer.blendMode
+          : asset.blendMode,
+    };
+    this.textSnapshotsByLayerId.set(input.layer.layerId, snapshot(positioned));
+    this.textSnapshotKeysByLayerId.set(input.layer.layerId, input.key);
+    this.textSnapshotBleedByLayerId.set(input.layer.layerId, {
+      bleedX: asset.bleedX ?? 0,
+      bleedY: asset.bleedY ?? 0,
+      positionMode: asset.positionMode ?? "centered",
+      baseWidth: (input.layer as { baseWidth?: number }).baseWidth ?? input.layer.width,
+      baseHeight: (input.layer as { baseHeight?: number }).baseHeight ?? input.layer.height,
+    });
+  }
+
+  private async prepareStickerAsset(
+    input: StickerPreparationInput,
+  ): Promise<void> {
+    try {
+      const asset = await this.animatedStickerRenderer.render(
+        input.layer,
+        input.phase,
+      );
+      if (!asset) return;
+      await this.register(asset);
+      const snap = snapshot(asset);
+      this.stickerSnapshotsByLayerId.set(input.layer.layerId, snap);
+      this.stickerSnapshotKeysByLayerId.set(input.layer.layerId, input.key);
+    } catch {
+      // Best-effort background preparation: never throw
+    }
+  }
+
+  /**
+   * Pre-warms upcoming sticker frames on the timeline ahead of the playhead.
+   * Registers the native GPU texture so playback never misses a frame.
+   */
+  async prewarmStickerAssets(
+    scene: EvaluatedScene,
+    phase: TelemetryStickerPhase = "sticker-prefetch",
+  ): Promise<void> {
+    if (!isTauriRuntime()) return;
+    const layers = scene.visualLayers.filter(
+      (layer): layer is EvaluatedMediaLayer =>
+        layer.layerType === "media" &&
+        layer.clipKind === "sticker" &&
+        layer.stickerFormat === "lottie",
+    );
+    if (layers.length === 0) return;
+    await Promise.all(
+      layers.map(async (layer) => {
+        try {
+          const asset = await this.animatedStickerRenderer.render(layer, phase);
+          if (asset) {
+            await this.register(asset);
+            this.stickerSnapshotsByLayerId.set(layer.layerId, snapshot(asset));
+          }
+        } catch {
+          // prewarm is best-effort, never throw
+        }
+      }),
+    );
+  }
+
+  private async rasterizeAnimatedStickers(
+    scene: EvaluatedScene,
+    phase: TelemetryStickerPhase = "visible-playback",
+    nonBlocking = false,
+  ): Promise<NativeRasterLayerSnapshot[]> {
+    const layers = scene.visualLayers.filter(
+      (layer): layer is EvaluatedMediaLayer =>
+        layer.layerType === "media" &&
+        layer.clipKind === "sticker" &&
+        layer.stickerFormat === "lottie",
+    );
+    if (layers.length === 0) return [];
+
+    if (nonBlocking) {
+      const results: NativeRasterLayerSnapshot[] = [];
+      for (const layer of layers) {
+        const stickerId =
+          layer.stickerSourceId || layer.mediaId.replace("sticker-", "");
+        const speed = Number(layer.stickerSettings?.speed ?? 1);
+        const rawFrame = Math.max(
+          0,
+          Math.floor(layer.sourceTime * Math.max(0, speed) * 30),
+        );
+        const key = `${layer.layerId}:${stickerId}:${rawFrame}:${Math.ceil(layer.width)}x${Math.ceil(layer.height)}`;
+
+        const hasCurrentSnapshot =
+          this.stickerSnapshotKeysByLayerId.get(layer.layerId) === key;
+        const previous = this.stickerSnapshotsByLayerId.get(layer.layerId);
+
+        if (!hasCurrentSnapshot) {
+          this.stickerPreparationScheduler.enqueue(key, {
+            layer,
+            key,
+            phase,
+          });
+        }
+
+        if (previous) {
+          const updated: NativeRasterLayerSnapshot = {
+            ...previous,
+            x: typeof layer.x === "number" ? layer.x : previous.x,
+            y: typeof layer.y === "number" ? layer.y : previous.y,
+            rotation:
+              typeof layer.rotation === "number"
+                ? layer.rotation
+                : previous.rotation,
+            opacity:
+              typeof layer.opacity === "number"
+                ? layer.opacity
+                : previous.opacity,
+            zIndex:
+              typeof layer.zIndex === "number" ? layer.zIndex : previous.zIndex,
+            blendMode:
+              typeof layer.blendMode === "string"
+                ? layer.blendMode
+                : previous.blendMode,
+          };
+          this.stickerSnapshotsByLayerId.set(layer.layerId, updated);
+          results.push(updated);
+        } else {
+          // Await initial render if no previous frame exists so it displays on entry
+          try {
+            const asset = await this.animatedStickerRenderer.render(
+              layer,
+              phase,
+            );
+            if (asset) {
+              await this.register(asset);
+              const snap = snapshot(asset);
+              this.stickerSnapshotsByLayerId.set(layer.layerId, snap);
+              this.stickerSnapshotKeysByLayerId.set(layer.layerId, key);
+              results.push(snap);
+            }
+          } catch {
+            // Best-effort: do not throw to caller
+          }
+        }
+      }
+      return results;
+    }
+
+    const assets = await Promise.all(
+      layers.map(async (layer) => {
+        try {
+          const asset = await this.animatedStickerRenderer.render(layer, phase);
+          if (asset) {
+            await this.register(asset);
+            const snap = snapshot(asset);
+            this.stickerSnapshotsByLayerId.set(layer.layerId, snap);
+            return snap;
+          }
+        } catch {
+          // Best-effort: return null on failure
+        }
+        return null;
+      }),
+    );
+    return assets.filter(
+      (snap): snap is NativeRasterLayerSnapshot => snap !== null,
+    );
+  }
+
+  /**
+   * Still images are native RGBA assets, not YUV video layers. Keeping this
+   * distinction at the raster bridge preserves PNG/WebP alpha while allowing
+   * the native compositor to own the final transform and blend operation.
+   */
+  private async rasterizeImages(
+    scene: EvaluatedScene,
+  ): Promise<NativeRasterLayerSnapshot[]> {
+    const layers = scene.visualLayers.filter(
+      (layer): layer is EvaluatedMediaLayer =>
+        layer.layerType === "media" &&
+        layer.mediaType === "image" &&
+        layer.stickerFormat !== "gif" &&
+        layer.stickerFormat !== "lottie",
+    );
+    if (layers.length === 0) return [];
+    const assets = await Promise.all(
+      layers.map((layer) => {
+        // Placement changes on every transform frame; the source texture does
+        // not. Registering by display dimensions caused a fresh decode/upload
+        // for every resize. Keep the immutable source resource keyed by source
+        // dimensions and send placement dimensions separately to the compositor.
+        const width = Math.max(1, Math.round(layer.sourceWidth ?? layer.width));
+        const height = Math.max(
+          1,
+          Math.round(layer.sourceHeight ?? layer.height),
+        );
+        const displayWidth = Math.max(1, layer.width);
+        const displayHeight = Math.max(1, layer.height);
+        const assetId = buildNativeImageAssetId(
+          layer.sourcePath,
+          width,
+          height,
+        );
+        this.imageSourcesById.set(assetId, {
+          sourcePath: layer.sourcePath,
+          width,
+          height,
+        });
+        let registration = this.imageCache.get(assetId);
+        if (!registration) {
+          registration = registerNativeImageAsset({
+            assetId,
+            sourcePath: layer.sourcePath,
+            width,
+            height,
+          }).then(() => {
+            this.registeredAssetIds.add(assetId);
+          });
+          this.imageCache.set(assetId, registration);
+          void registration.catch(() => {
+            if (this.imageCache.get(assetId) === registration)
+              this.imageCache.delete(assetId);
+            this.registeredAssetIds.delete(assetId);
+          });
+        }
+        return registration.then(() => ({
+          assetId,
+          width,
+          height,
+          ...(displayWidth !== width ? { displayWidth } : {}),
+          ...(displayHeight !== height ? { displayHeight } : {}),
+          x: layer.x,
+          y: layer.y,
+          rotation: layer.rotation,
+          opacity: layer.opacity,
+          zIndex: layer.zIndex,
+          blendMode: layer.blendMode,
+          isText: false,
+        }));
+      }),
+    );
+
+    return assets;
+  }
+
+  private async rasterizeBackground(
+    scene: EvaluatedScene,
+    frameKey: number,
+  ): Promise<NativeRasterLayerSnapshot[]> {
+    const background = scene.metadata.canvasBackground;
+    if (
+      !background ||
+      background.isTransparent ||
+      background.type === "solid" ||
+      (background.type !== "gradient" && background.type !== "shader")
+    )
+      return [];
+    if (typeof document === "undefined") {
+      throw new Error(
+        "Native raster background requires a canvas-capable desktop runtime",
+      );
+    }
+
+    const width = Math.max(1, Math.round(scene.metadata.canvasWidth));
+    const height = Math.max(1, Math.round(scene.metadata.canvasHeight));
+    // Gradients are immutable for a given configuration and dimensions. The
+    // old frame-keyed identity forced a full-canvas getImageData() and native
+    // upload on every playback frame even though the pixels never changed.
+    // Shaders are time-dependent and remain frame-addressed until they have a
+    // native procedural implementation.
+    const backgroundIdentity = stableSerialize(background);
+    const timeDependent = background.type === "shader";
+    const assetId = timeDependent
+      ? `native-background:${frameKey}:${backgroundIdentity}`
+      : `native-background:${backgroundIdentity}:${width}x${height}`;
+    const existing = this.assetsById.get(assetId);
+    if (existing) {
+      await this.register(existing);
+      return [snapshot(existing)];
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context)
+      throw new Error(
+        "Unable to create a 2D context for native background rasterization",
+      );
+    drawCanvasBackground(
+      context,
+      background,
+      width,
+      height,
+      scene.metadata.time,
+    );
+    const asset: UploadableNativeRaster = {
+      assetId,
+      // Keep as Uint8ClampedArray — avoids the O(W×H) Array.from() copy.
+      // registerNativeRasterAsset converts to number[] at the Tauri IPC boundary.
+      rgba: context.getImageData(0, 0, width, height).data,
+      width,
+      height,
+      x: 0,
+      y: 0,
+      rotation: 0,
+      opacity: 1,
+      zIndex: -1_000_000,
+      blendMode: "normal",
+      isText: false,
+    };
+    await this.register(asset);
+    return [snapshot(asset)];
+  }
+
+  private async register(
+    asset: UploadableNativeRaster,
+    force = false,
+  ): Promise<void> {
+    const isText = asset.isText || asset.assetId.startsWith("native-text:");
+    if (isText) {
+      this.textAssetsById.delete(asset.assetId);
+      this.textAssetsById.set(asset.assetId, asset);
+      while (this.textAssetsById.size > MAX_TEXT_CACHE_ENTRIES) {
+        const oldestId = this.textAssetsById.keys().next().value as
+          | string
+          | undefined;
+        if (!oldestId) break;
+        this.textAssetsById.delete(oldestId);
+        this.registeredAssetIds.delete(oldestId);
+      }
+    } else {
+      this.assetsById.delete(asset.assetId);
+      this.assetsById.set(asset.assetId, asset);
+      while (this.assetsById.size > MAX_REGISTERED_ASSETS) {
+        const oldestId = this.assetsById.keys().next().value as
+          | string
+          | undefined;
+        if (!oldestId) break;
+        this.assetsById.delete(oldestId);
+        this.registeredAssetIds.delete(oldestId);
+      }
+    }
+
+    if (!force && this.registeredAssetIds.has(asset.assetId)) return;
+    if (asset.rgba && asset.rgba.length > 0) {
+      await registerNativeRasterAsset(
+        asset as NativeRasterLayerSnapshot & {
+          rgba: number[] | Uint8ClampedArray;
+        },
+      );
+      this.registeredAssetIds.add(asset.assetId);
+    }
+  }
+}

@@ -1,0 +1,683 @@
+/**
+ * Serialization Layer for Rust ↔ Frontend Communication
+ *
+ * This module provides centralized type-safe conversion between:
+ * - Rust backend (snake_case)
+ * - TypeScript frontend (camelCase)
+ *
+ * Architecture principle:
+ * "Never manually convert between Rust and TypeScript types. Use centralized serialization layer."
+ *
+ * Benefits:
+ * - Single source of truth for field mappings
+ * - Type safety for all conversions
+ * - Consistent default handling
+ * - Easy to maintain when schema changes
+ */
+
+import { AUDIO_MODEL_VERSION, normalizeClipAudioProperties } from "./audio";
+import { CAPTION_MODEL_VERSION, type CaptionTrack } from "./captions";
+import type { Project, MediaAsset, Track, Clip, AspectRatio, TransitionTimelineItem, TimelineMarker, CanvasBackgroundConfig, MediaStreamInfo, DerivedMediaProvenance, ClipAudioProperties } from "./index";
+import type { Gap } from "./gap";
+
+// ============================================================================
+// RUST TYPES (snake_case)
+// ============================================================================
+
+/**
+ * Rust representation of a Project (snake_case fields)
+ *
+ * Note: This matches the actual Rust serde schema in src-tauri/src/models/mod.rs
+ * - modified_at is REQUIRED (not optional)
+ * - aspect_ratio, canvas_width, canvas_height, frame_rate, duration are OPTIONAL
+ */
+export interface RustProject {
+  id: string;
+  name: string;
+  created_at: number;
+  modified_at: number; // Required in Rust
+  aspect_ratio?: string | null; // Optional in Rust
+  canvas_width?: number | null; // Optional in Rust
+  canvas_height?: number | null; // Optional in Rust
+  frame_rate?: number | null; // Optional in Rust
+  duration?: number | null; // Optional in Rust
+  media_assets?: RustMediaAsset[];
+  main_video_track_id?: string | null;
+  canvas_background?: CanvasBackgroundConfig | null;
+  tracks?: RustTrack[];
+  clips?: RustClip[];
+  transitions?: TransitionTimelineItem[];
+  gaps?: RustGap[];
+  markers?: TimelineMarker[];
+  thumbnail?: string | null;
+  creator_thumbnails?: any[] | null;
+  timeline_schema_version?: number | null;
+  audio_model_version?: number | null;
+  caption_model_version?: number | null;
+  caption_tracks?: any[] | null;
+}
+
+/**
+ * Rust representation of a MediaAsset (snake_case fields)
+ */
+export interface RustMediaAsset {
+  id: string;
+  name: string;
+  path: string;
+  previewPath?: string;
+  type: "video" | "audio" | "image";
+  duration: number;
+  width?: number;
+  height?: number;
+  posterFrame?: string;
+  coverArt?: string;
+  size: number;
+  rotation?: number;
+  has_alpha?: boolean;
+  stickerFormat?: "static" | "gif" | "lottie";
+  stickerAnimationPath?: string;
+  stickerSourceId?: string;
+  contentBounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  streams?: MediaStreamInfo[];
+  derived_from?: DerivedMediaProvenance;
+}
+
+/**
+ * Rust representation of a Track (snake_case fields)
+ */
+export interface RustTrack {
+  id: string;
+  type: "video" | "audio" | "text" | "sticker" | "filter";
+  name: string;
+  muted: boolean;
+  locked: boolean;
+  visible: boolean;
+  height: number;
+}
+
+/**
+ * Rust representation of a Clip (snake_case fields)
+ */
+export interface RustClip {
+  id: string;
+  trackId: string;
+  mediaId: string;
+  startTime: number;
+  duration: number;
+  trimIn: number;
+  trimOut: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+  rotation: number;
+  aspectRatioLocked?: boolean;
+  sourceAspectRatio?: number;
+  style_definition?: any;
+  fitMode?: "contain" | "cover" | "fill" | "stretch" | "original";
+  conform?: import("@clypra-studio/engine").ClipConform;
+  volume?: number;
+  audio?: Partial<ClipAudioProperties>;
+  fade_in?: number;
+  fade_out?: number;
+  kind?: string;
+  audioPath?: string;
+  detachedFromClipId?: string;
+  compoundChildren?: RustClip[];
+  compoundPreview?: string;
+}
+
+/**
+ * Rust representation of a Gap (snake_case fields)
+ */
+export interface RustGap {
+  id: string;
+  track_id: string;
+  start_time: number;
+  duration: number;
+  type: "manual" | "auto" | "protected";
+  source: "user-insert" | "clip-drag" | "clip-delete" | "imported" | "unknown";
+  protected: boolean;
+  metadata?: {
+    created_at?: number;
+    note?: string;
+    replaced_clip_id?: string;
+    user_created?: boolean;
+  };
+}
+
+export interface ProjectPersistenceSnapshot {
+  project: Project;
+  mediaAssets: MediaAsset[];
+  tracks: Track[];
+  clips: Clip[];
+  transitions: TransitionTimelineItem[];
+  gaps: Gap[];
+  markers: TimelineMarker[];
+  captionTracks?: CaptionTrack[];
+  timelineSchemaVersion: number;
+  epoch?: number;
+  migrated: boolean;
+  rustProject: RustProject;
+  mainVideoTrackId?: string | null;
+}
+
+/**
+ * Parse, migrate, and validate a project before it can touch active state.
+ * Existing clip-kind/conform/text-effect migrations remain centralized in the
+ * Rust-to-frontend converters; this function makes the load boundary atomic.
+ */
+export function validateAndMigrateProjectPayload(input: unknown): ProjectPersistenceSnapshot {
+  let raw: any = input;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch (error) {
+      throw new Error(`Project JSON is malformed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("Project payload must be a JSON object");
+  }
+  const rust: any = {
+    ...raw,
+    created_at: raw.created_at ?? raw.createdAt ?? Date.now(),
+    modified_at: raw.modified_at ?? raw.updatedAt ?? raw.created_at ?? raw.createdAt ?? Date.now(),
+    aspect_ratio: raw.aspect_ratio ?? raw.aspectRatio,
+    canvas_width: raw.canvas_width ?? raw.canvasWidth,
+    canvas_height: raw.canvas_height ?? raw.canvasHeight,
+    frame_rate: raw.frame_rate ?? raw.frameRate,
+    media_assets: raw.media_assets ?? raw.mediaAssets,
+    canvas_background: raw.canvas_background ?? raw.canvasBackground,
+    timeline_schema_version: raw.timeline_schema_version ?? raw.timelineSchemaVersion,
+    audio_model_version: raw.audio_model_version ?? raw.audioModelVersion,
+    main_video_track_id: raw.main_video_track_id ?? raw.mainVideoTrackId,
+  };
+  if (typeof rust.id !== "string" || !rust.id.trim()) throw new Error("Project payload is missing a valid id");
+  if (typeof rust.name !== "string" || !rust.name.trim()) throw new Error("Project payload is missing a valid name");
+  if (!Number.isFinite(rust.created_at) || !Number.isFinite(rust.modified_at)) throw new Error("Project timestamps are invalid");
+
+  const arrays = ["tracks", "clips", "transitions", "gaps", "markers", "media_assets"] as const;
+  for (const key of arrays) {
+    const value = rust[key];
+    if (value !== undefined && !Array.isArray(value)) throw new Error(`Project field ${key} must be an array`);
+  }
+
+  const project = fromRustProject(rust as RustProject);
+  const mediaAssets = (rust.media_assets ?? []).map((asset: RustMediaAsset) => fromRustMediaAsset(asset));
+  const tracks = ((rust.tracks ?? []) as RustTrack[]).map((track) => fromRustTrack(track));
+  const clips = (rust.clips ?? []).map((clip: RustClip) => fromRustClip(clip));
+  const transitions = (rust.transitions ?? []) as TransitionTimelineItem[];
+  const gaps = (rust.gaps ?? []).map((gap: RustGap) => fromRustGap(gap));
+  const markers = (rust.markers ?? []) as TimelineMarker[];
+
+  // Detect and recover from duplicate IDs (can happen when concurrent timeline
+  // additions race before the serialization lock was in place). Keep only the
+  // first occurrence of each ID and mark the project as migrated so it is
+  // auto-saved in the repaired form.
+  const allItems = [...mediaAssets, ...tracks, ...clips, ...transitions, ...gaps, ...markers];
+  const ids = allItems.map((item: any) => item?.id).filter(Boolean);
+  let hasDuplicates = new Set(ids).size !== ids.length;
+  if (hasDuplicates) {
+    console.warn("[validateAndMigrateProjectPayload] Project contains duplicate editable item IDs — deduplicating for recovery");
+    const seenIds = new Set<string>();
+    const dedup = <T extends { id?: string }>(arr: T[]): T[] =>
+      arr.filter((item) => {
+        const id = (item as any).id;
+        if (!id || seenIds.has(id)) return false;
+        seenIds.add(id);
+        return true;
+      });
+    // Re-assign deduplicated arrays (mutate local vars only)
+    const dedupedTracks = dedup(tracks as any[]) as typeof tracks;
+    const dedupedClips = dedup(clips as any[]) as typeof clips;
+    tracks.length = 0;
+    tracks.push(...dedupedTracks);
+    clips.length = 0;
+    clips.push(...dedupedClips);
+    // Force migrated=true below so the repaired project is auto-saved
+    hasDuplicates = true;
+  }
+
+  const trackIds = new Set(tracks.map((track) => track.id));
+  // Drop orphan clips whose track was removed by deduplication
+  const orphanClipIds = clips.filter((c: any) => !trackIds.has(c.trackId)).map((c: any) => c.id);
+  if (orphanClipIds.length > 0) {
+    console.warn("[validateAndMigrateProjectPayload] Dropping orphan clips with missing track refs:", orphanClipIds);
+    const validClips = clips.filter((c: any) => trackIds.has(c.trackId));
+    clips.length = 0;
+    clips.push(...validClips);
+  }
+  for (const clip of clips) {
+    if (!trackIds.has(clip.trackId)) throw new Error(`Clip ${clip.id} refers to a missing track`);
+  }
+
+  const captionTracks: CaptionTrack[] = Array.isArray(rust.caption_tracks)
+    ? (rust.caption_tracks as CaptionTrack[])
+    : Array.isArray(raw.captionTracks)
+      ? (raw.captionTracks as CaptionTrack[])
+      : [];
+
+  const normalizedRust = toRustProject(project, {
+    mediaAssets,
+    tracks,
+    clips,
+    transitions,
+    gaps,
+    markers,
+    captionTracks,
+    mainVideoTrackId: rust.main_video_track_id ?? null,
+    updateModifiedTime: false,
+  });
+  const migrated = hasDuplicates || JSON.stringify(normalizedRust) !== JSON.stringify(raw);
+  return {
+    project,
+    mediaAssets,
+    tracks,
+    clips,
+    transitions,
+    gaps,
+    markers,
+    captionTracks,
+    timelineSchemaVersion: project.timelineSchemaVersion ?? 1,
+    migrated,
+    rustProject: normalizedRust,
+    mainVideoTrackId: rust.main_video_track_id ?? null,
+  };
+}
+
+// ============================================================================
+// RUST → FRONTEND CONVERTERS
+// ============================================================================
+
+/**
+ * Convert Rust Project to Frontend Project
+ *
+ * Handles optional fields from Rust with proper defaults:
+ * - modified_at is required in Rust, so no fallback needed
+ * - aspect_ratio, canvas_width, etc. are optional in Rust, provide sensible defaults
+ *
+ * @param rust - Project data from Rust backend (snake_case)
+ * @returns Frontend Project (camelCase)
+ */
+export function fromRustProject(rust: RustProject): Project {
+  return {
+    id: rust.id,
+    name: rust.name,
+    createdAt: rust.created_at,
+    updatedAt: rust.modified_at, // Required in Rust, no fallback needed
+    aspectRatio: (rust.aspect_ratio ?? "16:9") as AspectRatio,
+    canvasWidth: rust.canvas_width ?? 1920,
+    canvasHeight: rust.canvas_height ?? 1080,
+    frameRate: (rust.frame_rate ?? 30) as 24 | 30 | 60,
+    duration: rust.duration ?? 0,
+    mediaAssets: rust.media_assets?.map(fromRustMediaAsset),
+    canvasBackground: rust.canvas_background ?? undefined,
+    markers: rust.markers ?? undefined,
+    thumbnail: rust.thumbnail ?? undefined,
+    creatorThumbnails: rust.creator_thumbnails ?? undefined,
+    timelineSchemaVersion: rust.timeline_schema_version ?? 1,
+    audioModelVersion: rust.audio_model_version ?? AUDIO_MODEL_VERSION,
+    captionModelVersion: rust.caption_model_version ?? CAPTION_MODEL_VERSION,
+  };
+}
+
+/**
+ * Convert Rust MediaAsset to Frontend MediaAsset
+ *
+ * @param rust - MediaAsset data from Rust backend (snake_case)
+ * @returns Frontend MediaAsset (camelCase)
+ */
+export function fromRustMediaAsset(rust: RustMediaAsset): MediaAsset {
+  return {
+    id: rust.id,
+    name: rust.name,
+    path: rust.path,
+    previewPath: rust.previewPath,
+    type: rust.type,
+    duration: rust.duration,
+    width: rust.width,
+    height: rust.height,
+    posterFrame: rust.posterFrame,
+    coverArt: rust.coverArt,
+    size: rust.size,
+    rotation: rust.rotation,
+    has_alpha: rust.has_alpha,
+    contentBounds: rust.contentBounds,
+    stickerFormat: rust.stickerFormat,
+    stickerAnimationPath: rust.stickerAnimationPath,
+    stickerSourceId: rust.stickerSourceId,
+    streams: rust.streams,
+    derivedFrom: rust.derived_from,
+  };
+}
+
+/**
+ * Convert Rust Track to Frontend Track
+ *
+ * @param rust - Track data from Rust backend (snake_case)
+ * @returns Frontend Track (camelCase)
+ */
+export function fromRustTrack(rust: RustTrack): Track {
+  return {
+    id: rust.id,
+    type: rust.type,
+    name: rust.name,
+    muted: rust.muted,
+    locked: rust.locked,
+    visible: rust.visible,
+    height: rust.height,
+  };
+}
+
+/**
+ * Convert Rust Clip to Frontend Clip
+ *
+ * MIGRATION STRATEGY:
+ * - For old projects without 'kind' field, infer from ID patterns and mediaId
+ * - For new projects, 'kind' is always present from Rust
+ * - This ensures backward compatibility while working toward required 'kind'
+ *
+ * @param rust - Clip data from Rust backend (snake_case)
+ * @returns Frontend Clip (camelCase)
+ */
+export function fromRustClip(rust: RustClip): Clip {
+  // Migrate old clips: infer kind from ID patterns if missing
+  let kind: Clip["kind"] = rust.kind as any;
+  if (!kind) {
+    // Legacy migration: infer kind from patterns
+    if ((rust as any).isCompound || (rust as any).is_compound) {
+      kind = "compound" as any;
+    } else if ("text" in rust || rust.id?.startsWith("text-clip-")) {
+      kind = "text";
+    } else if (rust.mediaId?.startsWith("sticker-")) {
+      kind = "sticker";
+    } else if (rust.id?.startsWith("filter-clip-") || rust.kind === "filter") {
+      kind = "filter";
+    } else {
+      // Default to video for unknown legacy clips
+      kind = "video";
+    }
+  }
+
+  // Professional Conform System migration: construct default conform from legacy fitMode
+  let conform = rust.conform;
+  if (!conform && kind !== "audio" && kind !== "text" && kind !== "filter" && kind !== "video-effect" && kind !== "body-effect") {
+    let mode: "fit" | "fill" | "none" = "fit";
+    if (rust.fitMode === "cover") {
+      mode = "fill";
+    } else if (rust.fitMode === "original") {
+      mode = "none";
+    }
+    conform = {
+      mode,
+      sourceWidth: rust.width || 0,
+      sourceHeight: rust.height || 0,
+      userScale: 1,
+      userOffsetX: 0,
+      userOffsetY: 0,
+    };
+  }
+
+  // Base clip properties
+  const baseClip: Clip = {
+    id: rust.id,
+    kind, // Now always present after migration
+    trackId: rust.trackId,
+    mediaId: rust.mediaId,
+    startTime: rust.startTime,
+    duration: rust.duration,
+    trimIn: rust.trimIn,
+    trimOut: rust.trimOut,
+    x: rust.x,
+    y: rust.y,
+    width: rust.width,
+    height: rust.height,
+    opacity: rust.opacity,
+    rotation: rust.rotation,
+    aspectRatioLocked: rust.aspectRatioLocked,
+    sourceAspectRatio: rust.sourceAspectRatio,
+    fitMode: rust.fitMode,
+    conform,
+    volume: rust.volume,
+  };
+
+  // Preserve all additional properties (e.g., TextClip properties)
+  // This ensures text, fontFamily, fontSize, color, etc. are restored
+  const hasAudioModel = kind !== "text" && kind !== "filter" && kind !== "video-effect" && kind !== "body-effect" && kind !== "animated-overlay" && kind !== "smart-overlay";
+  const clip = {
+    ...baseClip,
+    ...rust,
+    ...(hasAudioModel ? { audio: normalizeClipAudioProperties({ ...rust, kind }) } : {}),
+  } as any;
+  if (rust.style_definition) {
+    clip.styleDefinition = rust.style_definition;
+    delete clip.style_definition;
+  }
+
+  const rawChildren = (rust as any).compoundChildren ?? (rust as any).compound_children;
+  if (Array.isArray(rawChildren)) {
+    clip.compoundChildren = rawChildren.map((child: RustClip) => fromRustClip(child));
+    delete clip.compound_children;
+  }
+
+  return clip as Clip;
+}
+
+/**
+ * Convert Rust Gap to Frontend Gap
+ *
+ * @param rust - Gap data from Rust backend (snake_case)
+ * @returns Frontend Gap (camelCase)
+ */
+export function fromRustGap(rust: RustGap): Gap {
+  return {
+    id: rust.id,
+    trackId: rust.track_id,
+    startTime: rust.start_time,
+    duration: rust.duration,
+    type: rust.type,
+    source: rust.source,
+    protected: rust.protected,
+    metadata: rust.metadata
+      ? {
+          createdAt: rust.metadata.created_at,
+          note: rust.metadata.note,
+          replacedClipId: rust.metadata.replaced_clip_id,
+          userCreated: rust.metadata.user_created,
+        }
+      : undefined,
+  };
+}
+
+// ============================================================================
+// FRONTEND → RUST CONVERTERS
+// ============================================================================
+
+/**
+ * Convert Frontend Project to Rust Project
+ *
+ * @param frontend - Frontend Project (camelCase)
+ * @param options - Additional data to include (tracks, clips, mediaAssets)
+ * @returns Rust Project (snake_case)
+ */
+export function toRustProject(
+  frontend: Project,
+  options?: {
+    tracks?: Track[];
+    clips?: Clip[];
+    mediaAssets?: MediaAsset[];
+    transitions?: TransitionTimelineItem[];
+    gaps?: Gap[];
+    markers?: TimelineMarker[];
+    captionTracks?: CaptionTrack[];
+    mainVideoTrackId?: string | null;
+    /** Update modification timestamp to current time (default: true, set false for round-trip serialization) */
+    updateModifiedTime?: boolean;
+  },
+): RustProject {
+  return {
+    id: frontend.id,
+    name: frontend.name,
+    created_at: frontend.createdAt,
+    // Only update modified_at when actually saving, not during round-trip serialization
+    modified_at: options?.updateModifiedTime !== false ? Date.now() : frontend.updatedAt,
+    aspect_ratio: frontend.aspectRatio,
+    canvas_width: frontend.canvasWidth,
+    canvas_height: frontend.canvasHeight,
+    frame_rate: frontend.frameRate,
+    duration: frontend.duration,
+    canvas_background: frontend.canvasBackground,
+    media_assets: options?.mediaAssets?.map(toRustMediaAsset) ?? [],
+    tracks: options?.tracks?.map(toRustTrack) ?? [],
+    clips: options?.clips?.map(toRustClip) ?? [],
+    transitions: options?.transitions ?? [],
+    gaps: options?.gaps?.map(toRustGap) ?? [],
+    markers: options?.markers ?? [],
+    thumbnail: frontend.thumbnail,
+    creator_thumbnails: frontend.creatorThumbnails ?? undefined,
+    timeline_schema_version: frontend.timelineSchemaVersion ?? 1,
+    audio_model_version: frontend.audioModelVersion ?? AUDIO_MODEL_VERSION,
+    caption_model_version: frontend.captionModelVersion ?? CAPTION_MODEL_VERSION,
+    caption_tracks: options?.captionTracks ?? [],
+    ...(options?.mainVideoTrackId !== undefined
+      ? { main_video_track_id: options.mainVideoTrackId }
+      : {}),
+  };
+}
+
+/**
+ * Convert Frontend MediaAsset to Rust MediaAsset
+ *
+ * @param frontend - Frontend MediaAsset (camelCase)
+ * @returns Rust MediaAsset (snake_case)
+ */
+export function toRustMediaAsset(frontend: MediaAsset): RustMediaAsset {
+  return {
+    id: frontend.id,
+    name: frontend.name,
+    path: frontend.path,
+    previewPath: frontend.previewPath,
+    type: frontend.type,
+    duration: frontend.duration,
+    width: frontend.width,
+    height: frontend.height,
+    posterFrame: frontend.posterFrame,
+    coverArt: frontend.coverArt,
+    size: frontend.size,
+    rotation: frontend.rotation,
+    has_alpha: frontend.has_alpha,
+    contentBounds: frontend.contentBounds,
+    stickerFormat: frontend.stickerFormat,
+    stickerAnimationPath: frontend.stickerAnimationPath,
+    stickerSourceId: frontend.stickerSourceId,
+    streams: frontend.streams,
+    derived_from: frontend.derivedFrom,
+  };
+}
+
+/**
+ * Convert Frontend Track to Rust Track
+ *
+ * @param frontend - Frontend Track (camelCase)
+ * @returns Rust Track (snake_case)
+ */
+export function toRustTrack(frontend: Track): RustTrack {
+  // Map new track types to existing Rust types
+  let rustType: RustTrack["type"];
+
+  if (frontend.type === "video-effect" || frontend.type === "body-effect" || frontend.type === "animated-overlay") {
+    rustType = "video"; // Map effect/overlay tracks to video type for Rust
+  } else {
+    rustType = frontend.type as RustTrack["type"];
+  }
+
+  return {
+    id: frontend.id,
+    type: rustType,
+    name: frontend.name,
+    muted: frontend.muted,
+    locked: frontend.locked,
+    visible: frontend.visible,
+    height: frontend.height,
+  };
+}
+
+/**
+ * Convert Frontend Clip to Rust Clip
+ *
+ * @param frontend - Frontend Clip (camelCase)
+ * @returns Rust Clip (snake_case)
+ */
+export function toRustClip(frontend: Clip): RustClip {
+  // Base clip properties
+  const baseClip: RustClip = {
+    id: frontend.id,
+    kind: frontend.kind,
+    trackId: frontend.trackId,
+    mediaId: frontend.mediaId,
+    startTime: frontend.startTime,
+    duration: frontend.duration,
+    trimIn: frontend.trimIn,
+    trimOut: frontend.trimOut,
+    x: frontend.x,
+    y: frontend.y,
+    width: frontend.width,
+    height: frontend.height,
+    opacity: frontend.opacity,
+    rotation: frontend.rotation,
+    aspectRatioLocked: frontend.aspectRatioLocked,
+    sourceAspectRatio: frontend.sourceAspectRatio,
+    fitMode: frontend.fitMode,
+    volume: frontend.volume,
+  };
+
+  // Preserve all additional properties (e.g., TextClip properties)
+  // Rust stores clips as Vec<serde_json::Value>, so it can handle any extra fields
+  const rust = { ...baseClip, ...frontend } as any;
+  const fAny = frontend as any;
+  if (fAny.styleDefinition) {
+    rust.style_definition = fAny.styleDefinition;
+    delete rust.styleDefinition;
+  }
+
+  const rawChildren = fAny.compoundChildren ?? fAny.compound_children;
+  if (Array.isArray(rawChildren)) {
+    rust.compoundChildren = rawChildren.map((child: Clip) => toRustClip(child));
+    delete rust.compound_children;
+  }
+
+  return rust as RustClip;
+}
+
+/**
+ * Convert Frontend Gap to Rust Gap
+ *
+ * @param frontend - Frontend Gap (camelCase)
+ * @returns Rust Gap (snake_case)
+ */
+export function toRustGap(frontend: Gap): RustGap {
+  return {
+    id: frontend.id,
+    track_id: frontend.trackId,
+    start_time: frontend.startTime,
+    duration: frontend.duration,
+    type: frontend.type,
+    source: frontend.source,
+    protected: frontend.protected,
+    metadata: frontend.metadata
+      ? {
+          created_at: frontend.metadata.createdAt,
+          note: frontend.metadata.note,
+          replaced_clip_id: frontend.metadata.replacedClipId,
+          user_created: frontend.metadata.userCreated,
+        }
+      : undefined,
+  };
+}

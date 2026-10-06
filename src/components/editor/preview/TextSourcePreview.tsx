@@ -1,0 +1,258 @@
+import React, { useRef, useEffect, useCallback, useState } from "react";
+import { TemplatePreviewPlayer } from "@/features/text-templates";
+import { Minus, Plus, RotateCcw } from "lucide-react";
+import { renderTextEffectToCanvas, textEffectConfigToScene, type TextEffectConfig, _buildConfig } from "@clypra-studio/engine";
+import { getFontLoader } from "@/core/fonts/FontLoader";
+import { traceTextRenderGeometry, traceTextRenderScene } from "@/core/render/textRenderTrace";
+
+// Effects are designed for this banner canvas size (800×200).
+const PREVIEW_CANVAS_W = 800;
+const PREVIEW_CANVAS_H = 200;
+
+interface TextSourcePreviewProps {
+  preset: (TextEffectConfig & { presetType?: "effect" | "template" }) | null;
+}
+
+const normalizePreviewFontWeight = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.min(900, Math.max(100, Math.round(value / 100) * 100));
+  }
+
+  if (typeof value === "string") {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return normalizePreviewFontWeight(numeric);
+    }
+
+    const normalized = value
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_-]/g, "");
+    if (normalized === "thin") return 100;
+    if (normalized === "extralight" || normalized === "ultralight") return 200;
+    if (normalized === "light") return 300;
+    if (normalized === "normal" || normalized === "regular") return 400;
+    if (normalized === "medium") return 500;
+    if (normalized === "semibold" || normalized === "demibold") return 600;
+    if (normalized === "bold") return 700;
+    if (normalized === "extrabold" || normalized === "ultrabold") return 800;
+    if (normalized === "black" || normalized === "heavy") return 900;
+  }
+
+  return 700;
+};
+
+export const resolveTextSourcePreviewConfig = (preset: any): TextEffectConfig => {
+  // Built-in presets are nested TextEffectDefinition structures, while API presets can be flat TextEffectConfig structures.
+  // Normalize them into the exact config shape consumed by renderTextEffectCore.
+  const isNested = !!preset?.font;
+  const config = isNested ? _buildConfig(preset, preset.text || "CLYPRA", preset.fontSize || 100, PREVIEW_CANVAS_W, PREVIEW_CANVAS_H) : preset;
+  const sceneText = preset?.scene?.text;
+
+  return {
+    ...config,
+    text: config.text || "CLYPRA",
+    effectName: config.effectName || config.name || preset?.name || "Effect",
+    fontFamily: config.fontFamily || sceneText?.fontFamily || preset?.font?.family || preset?.fontFamily || "Inter Variable",
+    fontSize: config.fontSize ?? sceneText?.fontSize ?? preset?.fontSize ?? 100,
+    fontWeight: normalizePreviewFontWeight(config.fontWeight ?? sceneText?.fontWeight ?? preset?.font?.weight ?? preset?.fontWeight),
+    fontStyle: config.fontStyle || sceneText?.fontStyle || preset?.font?.style || preset?.fontStyle || "normal",
+    letterSpacing: config.letterSpacing ?? sceneText?.letterSpacing ?? preset?.font?.letterSpacing ?? preset?.letterSpacing ?? 0,
+    lineHeight: config.lineHeight ?? sceneText?.lineHeight ?? preset?.font?.lineHeight ?? preset?.lineHeight ?? 1.2,
+    glowLayers: config.glowLayers || [],
+  };
+};
+
+export const TextSourcePreview: React.FC<TextSourcePreviewProps> = ({ preset }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountedRef = useRef(true);
+  const [templateZoom, setTemplateZoom] = useState(1);
+
+
+
+  const setCanvasRef = useCallback((node: HTMLCanvasElement | null) => {
+    (canvasRef as { current: HTMLCanvasElement | null }).current = node;
+    if (node) {
+      // Get device pixel ratio for high-DPI displays
+      const dpr = window.devicePixelRatio || 1;
+
+      // Set logical size via CSS
+      node.style.width = `${PREVIEW_CANVAS_W}px`;
+      node.style.height = `${PREVIEW_CANVAS_H}px`;
+
+      // Set actual canvas buffer size accounting for DPI (but keep at 1:1 for text effects)
+      // Text effects are designed at 800×200, so we render at that exact size
+      node.width = PREVIEW_CANVAS_W;
+      node.height = PREVIEW_CANVAS_H;
+
+
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const isTemplate = preset?.presetType === "template" || !!(preset as any)?.templateData || !!(preset as any)?.lottieData;
+  const isEffect = !isTemplate && (preset?.presetType === "effect" || !!(preset as any)?.fontFamily);
+
+
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !isEffect || !preset) {
+      return;
+    }
+
+    let aborted = false;
+
+    const effectConfig = resolveTextSourcePreviewConfig(preset);
+
+    async function start() {
+      if (effectConfig.fontFamily) {
+        try {
+          const fontFace = `${effectConfig.fontStyle || "normal"} ${effectConfig.fontWeight || 700} 16px "${effectConfig.fontFamily}"`;
+          await getFontLoader().ensureFont({
+            family: effectConfig.fontFamily,
+            weight: effectConfig.fontWeight || 700,
+            style: effectConfig.fontStyle || "normal",
+          });
+          if (typeof document !== "undefined" && document.fonts) {
+            await document.fonts.load(fontFace);
+            if (!document.fonts.check(fontFace)) {
+              console.warn("[TextSourcePreview] Exact preview font variant is not available:", fontFace);
+            }
+          }
+        } catch (error) {
+          console.warn("[TextSourcePreview] Font load failed:", error);
+        }
+      }
+
+      if (typeof document !== "undefined" && document.fonts) {
+        await document.fonts.ready;
+      }
+
+      if (aborted || !mountedRef.current) return;
+
+      const ctx = canvas!.getContext("2d");
+      if (!ctx) return;
+
+      ctx.clearRect(0, 0, PREVIEW_CANVAS_W, PREVIEW_CANVAS_H);
+      traceTextRenderGeometry({
+        path: "source-preview",
+        assetId: (preset as any).id,
+        revisionId: (preset as any).revisionId ?? (preset as any).revision?.revisionId,
+        contentHash: (preset as any).contentHash ?? (preset as any).revision?.contentHash,
+        layer: {
+          text: effectConfig.text,
+          fontFamily: effectConfig.fontFamily,
+          fontSize: effectConfig.fontSize,
+          fontWeight: effectConfig.fontWeight,
+          fontStyle: effectConfig.fontStyle,
+          textAlign: effectConfig.textPosX ?? "center",
+          verticalAlign: effectConfig.textPosY ?? "middle",
+        },
+        render: {
+          canvasWidth: PREVIEW_CANVAS_W,
+          canvasHeight: PREVIEW_CANVAS_H,
+          renderer: "shared-text-effect-engine -> source-canvas",
+        },
+        authoredCanvas: (preset as any).scene?.canvas,
+      });
+
+      try {
+        // Studio's authoring surface evaluates a SceneDocument. Use the same
+        // scene path here so source preview does not use a second legacy
+        // renderer with different post-FX/layout behavior.
+        const publishedScene = (preset as any).scene;
+        if (publishedScene?.effectLayers) {
+          const scene = JSON.parse(JSON.stringify(publishedScene));
+          scene.text.content = effectConfig.text;
+          scene.text.fontFamily = effectConfig.fontFamily;
+          scene.text.fontWeight = effectConfig.fontWeight;
+          scene.text.fontStyle = effectConfig.fontStyle;
+          scene.text.fontSize = effectConfig.fontSize;
+          scene.text.letterSpacing = effectConfig.letterSpacing;
+          scene.text.lineHeight = effectConfig.lineHeight;
+          scene.canvas.width = PREVIEW_CANVAS_W;
+          scene.canvas.height = PREVIEW_CANVAS_H;
+          traceTextRenderScene(scene, {
+            path: "source-preview",
+            assetId: (preset as any).id,
+            category: (preset as any).category,
+            revisionId: (preset as any).revisionId,
+            contentHash: (preset as any).contentHash,
+            time: 0,
+          });
+          renderTextEffectToCanvas(ctx, {
+            source: { scene, revisionId: (preset as any).revisionId, contentHash: (preset as any).contentHash },
+            context: { environment: "editor", time: 0, width: PREVIEW_CANVAS_W, height: PREVIEW_CANVAS_H },
+          });
+        } else {
+          const scene = textEffectConfigToScene(effectConfig);
+          traceTextRenderScene(scene, {
+            path: "source-preview",
+            assetId: (preset as any).id,
+            category: (preset as any).category,
+            revisionId: (preset as any).revisionId,
+            contentHash: (preset as any).contentHash,
+            time: 0,
+          });
+          renderTextEffectToCanvas(ctx, {
+            source: scene,
+            context: { environment: "editor", time: 0, width: PREVIEW_CANVAS_W, height: PREVIEW_CANVAS_H },
+          });
+        }
+      } catch (error) {
+        console.error("[TextSourcePreview] ❌ Error:", error);
+        ctx.fillStyle = "#ff0000";
+        ctx.font = "14px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Render Error", PREVIEW_CANVAS_W / 2, PREVIEW_CANVAS_H / 2);
+      }
+    }
+
+    start();
+
+    return () => {
+      aborted = true;
+    };
+  }, [preset, isEffect]);
+
+  if (!preset) return null;
+
+  if (isTemplate) {
+    return (
+      <div className="w-full aspect-video checkerboard flex items-center justify-center relative p-8 shadow-[0_0_40px_rgba(0,0,0,0.8)] border border-white/5 overflow-hidden">
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 p-1 backdrop-blur-sm">
+          <button type="button" aria-label="Zoom out preview" onClick={() => setTemplateZoom((value) => Math.max(0.5, Number((value - 0.1).toFixed(1))))} className="rounded p-1 text-white/70 hover:bg-white/10 hover:text-white cursor-pointer"><Minus size={13} /></button>
+          <button type="button" aria-label="Reset preview zoom" onClick={() => setTemplateZoom(1)} className="min-w-10 rounded px-1 text-[10px] text-white/80 hover:bg-white/10 cursor-pointer">{Math.round(templateZoom * 100)}%</button>
+          <button type="button" aria-label="Zoom in preview" onClick={() => setTemplateZoom((value) => Math.min(2, Number((value + 0.1).toFixed(1))))} className="rounded p-1 text-white/70 hover:bg-white/10 hover:text-white cursor-pointer"><Plus size={13} /></button>
+          <button type="button" aria-label="Reset preview zoom" onClick={() => setTemplateZoom(1)} className="rounded p-1 text-white/70 hover:bg-white/10 hover:text-white cursor-pointer"><RotateCcw size={12} /></button>
+        </div>
+        <div className="w-full h-full flex items-center justify-center" style={{ transform: `scale(${templateZoom})`, transformOrigin: "center" }}>
+          <TemplatePreviewPlayer lottieData={(preset as any).injectedData || (preset as any).templateData || (preset as any).lottieData || preset} autoplay={true} loop={true} mode="canvas" fitToContent={true} className="w-full h-full object-contain" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full flex items-center justify-center relative overflow-hidden checkerboard" style={{ aspectRatio: `${PREVIEW_CANVAS_W} / ${PREVIEW_CANVAS_H}` }}>
+      <canvas
+        ref={setCanvasRef}
+        style={{
+          width: `${PREVIEW_CANVAS_W}px`,
+          height: `${PREVIEW_CANVAS_H}px`,
+          maxWidth: "100%",
+          maxHeight: "100%",
+          objectFit: "contain",
+        }}
+        className="block select-none pointer-events-none"
+      />
+    </div>
+  );
+};

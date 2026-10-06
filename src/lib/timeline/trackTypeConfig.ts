@@ -1,0 +1,451 @@
+/**
+ * Track Type Configuration Registry
+ *
+ * Single source of truth for all per-type metadata.
+ * Every decision that varies by TrackType must derive from this file —
+ * no more scattered if-chains or hard-coded magic strings.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │  Adding a new TrackType?                                                │
+ * │  1. Add it to TrackType in src/types/index.ts                          │
+ * │  2. Add an entry here — TypeScript will error until you do             │
+ * │  3. Everything else (insertion, reuse, pruning) flows automatically    │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ */
+
+import type { Clip, Track, TrackType } from "@/types";
+
+// ─── Value types ─────────────────────────────────────────────────────────────
+
+/**
+ * Where a new track of this type is inserted in the timeline.
+ * - "top"          → index 0 (above everything, including the main video track)
+ * - "below-video"  → immediately after the first video track
+ * - "bottom"       → appended after all existing tracks
+ */
+export type TrackPlacement = "top" | "below-video" | "bottom";
+
+/**
+ * How find-or-create (ensureTrackForType) works for this track type.
+ * - "primary"         → always returns mainVideoTrackId; never creates a new track
+ * - "shared"          → all clips of this type share ONE track; create it if absent
+ * - "per-clip"        → always create a fresh track for every new clip
+ * - "per-media-group" → one track per unique mediaId; clips with the same mediaId share a track
+ */
+export type TrackReuseStrategy =
+  | "primary"
+  | "shared"
+  | "per-clip"
+  | "per-media-group";
+
+export interface TrackTypeConfig {
+  /** Timeline row height in pixels. */
+  height: number;
+  /** Optional height for the primary visual row of this type. */
+  primaryHeight?: number;
+  /** Optional height for secondary visual rows of this type. */
+  secondaryHeight?: number;
+  /** Where a newly created track of this type is inserted. */
+  placement: TrackPlacement;
+  /** Controls how ensureTrackForType() finds or creates a track. */
+  reuseStrategy: TrackReuseStrategy;
+  /**
+   * Whether the track is automatically removed when its last clip is deleted.
+   * Set to false for tracks that must always exist (e.g. the primary video track).
+   */
+  autoPrune: boolean;
+  /** Human-readable label used when auto-naming a new track. */
+  displayName: string;
+}
+
+/** Visual role used by the timeline UI. This is intentionally separate from
+ * TrackType because video tracks can be either the primary A-roll or a
+ * secondary B-roll track. */
+export type TrackVisualRole = "a-roll" | "b-roll" | Exclude<TrackType, "video">;
+
+export interface TrackVisualSpec {
+  role: TrackVisualRole;
+  label: string;
+  height: number;
+  opacity: number;
+  tone: "primary" | "secondary" | "audio" | "auxiliary";
+}
+
+// ─── Registry ────────────────────────────────────────────────────────────────
+
+/**
+ * Canonical metadata for every TrackType.
+ * TypeScript will surface a compile error if a TrackType value is missing here.
+ */
+export const TRACK_TYPE_CONFIG: Record<TrackType, TrackTypeConfig> = {
+  video: {
+    height: 80,
+    primaryHeight: 80,
+    secondaryHeight: 60,
+    placement: "top",
+    reuseStrategy: "primary",
+    autoPrune: true,
+    displayName: "Video",
+  },
+  audio: {
+    height: 60,
+    // Audio is a bottom-of-timeline lane. Keeping it after every visual row
+    // makes the Main Track boundary deterministic even when overlays are
+    // added after audio has already been placed.
+    placement: "bottom",
+    reuseStrategy: "per-clip",
+    autoPrune: true,
+    displayName: "Audio",
+  },
+  text: {
+    height: 30,
+    placement: "top",
+    reuseStrategy: "per-clip",
+    autoPrune: true,
+    displayName: "Text",
+  },
+  sticker: {
+    height: 30,
+    placement: "top",
+    reuseStrategy: "per-clip",
+    autoPrune: true,
+    displayName: "Sticker",
+  },
+  filter: {
+    height: 30,
+    placement: "top",
+    reuseStrategy: "per-media-group",
+    autoPrune: true,
+    displayName: "Filter",
+  },
+  "video-effect": {
+    height: 30,
+    placement: "top",
+    reuseStrategy: "per-media-group",
+    autoPrune: true,
+    displayName: "Effect",
+  },
+  "body-effect": {
+    height: 30,
+    placement: "top",
+    reuseStrategy: "per-media-group",
+    autoPrune: true,
+    displayName: "Body Effect",
+  },
+  "animated-overlay": {
+    height: 30,
+    placement: "top",
+    reuseStrategy: "shared",
+    autoPrune: true,
+    displayName: "Overlays",
+  },
+};
+
+/**
+ * Canonical helper to resolve the authoritative primary video track (A-Roll) ID.
+ *
+ * In Clypra's timeline architecture:
+ * 1. If `mainVideoTrackId` is explicitly provided and matches an existing video track,
+ *    it is authoritative.
+ * 2. In top-insertion order, overlay/B-roll video tracks reside above the main video track
+ *    (at lower array indices). Thus, the primary A-roll track is always the bottommost
+ *    video track (highest index video track before audio).
+ */
+export function resolvePrimaryVideoTrackId(
+  tracks: Array<Pick<Track, "id" | "type">>,
+  mainVideoTrackId?: string | null,
+): string | null {
+  if (mainVideoTrackId) {
+    const matched = tracks.find(
+      (track) => track.id === mainVideoTrackId && track.type === "video",
+    );
+    if (matched) return matched.id;
+  }
+
+  // Fallback: bottommost video track in array order
+  for (let i = tracks.length - 1; i >= 0; i--) {
+    if (tracks[i].type === "video") {
+      return tracks[i].id;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolves the display role for a track without relying on array position.
+ * mainVideoTrackId is authoritative; the bottommost video track is the compatibility
+ * fallback for older or partially hydrated projects.
+ */
+export function getTrackVisualSpec(
+  track: Pick<Track, "id" | "type">,
+  tracks: Array<Pick<Track, "id" | "type">>,
+  mainVideoTrackId?: string | null,
+): TrackVisualSpec {
+  if (track.type === "video") {
+    const primaryVideoId = resolvePrimaryVideoTrackId(tracks, mainVideoTrackId);
+    const isARoll = primaryVideoId !== null && track.id === primaryVideoId;
+
+    return {
+      role: isARoll ? "a-roll" : "b-roll",
+      label: isARoll ? "A-Roll (Main)" : "B-Roll",
+      // Keep the main A-roll readable while keeping secondary video rows compact.
+      // ClipFilmstrip derives its canvas height from this row height.
+      height: isARoll
+        ? (TRACK_TYPE_CONFIG.video.primaryHeight ??
+          TRACK_TYPE_CONFIG.video.height)
+        : (TRACK_TYPE_CONFIG.video.secondaryHeight ??
+          TRACK_TYPE_CONFIG.video.height),
+      opacity: 1,
+      tone: isARoll ? "primary" : "secondary",
+    };
+  }
+
+  const config = TRACK_TYPE_CONFIG[track.type];
+  const labels: Record<Exclude<TrackType, "video">, string> = {
+    audio: "Audio",
+    text: "Text",
+    sticker: "Sticker",
+    filter: "Filter",
+    "video-effect": "Video Effect",
+    "body-effect": "Body Effect",
+    "animated-overlay": "Animated Overlay",
+  };
+
+  return {
+    role: track.type,
+    label: labels[track.type],
+    height: config.height,
+    opacity: 1,
+    tone: track.type === "audio" ? "audio" : "auxiliary",
+  };
+}
+
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Returns true if an empty track should be automatically removed.
+ * Protects the primary video track (mainVideoTrackId / bottommost video track) from auto-pruning.
+ * All other empty tracks (secondary video, audio, text, overlay, etc.) are auto-pruned.
+ */
+export function shouldAutoPruneTrack(
+  track: { id: string; type: string },
+  tracksOrPrimaryId?: Track[] | string | null,
+  mainVideoTrackId?: string | null,
+): boolean {
+  let primaryId: string | null = null;
+  if (typeof tracksOrPrimaryId === "string") {
+    primaryId = tracksOrPrimaryId;
+  } else if (typeof mainVideoTrackId === "string") {
+    primaryId = mainVideoTrackId;
+  } else if (Array.isArray(tracksOrPrimaryId)) {
+    primaryId = resolvePrimaryVideoTrackId(tracksOrPrimaryId, mainVideoTrackId);
+  }
+
+  if (primaryId && track.id === primaryId) {
+    return false; // Protect primary video track
+  }
+
+  const config = (TRACK_TYPE_CONFIG as Record<string, TrackTypeConfig>)[
+    track.type
+  ];
+  return config?.autoPrune ?? true;
+}
+
+/**
+ * Calculates the array insertion index for a brand-new track of `trackType`
+ * given the current ordered `tracks` list.
+ *
+ * Replaces the scattered `getInsertIndexForNewTrack` if-chain.
+ */
+export function getTrackInsertionIndex(
+  tracks: Track[],
+  trackType: TrackType,
+): number {
+  const config = TRACK_TYPE_CONFIG[trackType];
+
+  switch (config.placement) {
+    case "top":
+      return 0;
+
+    case "below-video": {
+      const videoIdx = tracks.findIndex((t) => t.type === "video");
+      return videoIdx >= 0 ? videoIdx + 1 : tracks.length;
+    }
+
+    case "bottom":
+      return tracks.length;
+  }
+}
+
+/**
+ * Like getTrackInsertionIndex but with mediaId-aware grouping for
+ * "per-media-group" types (filter, video-effect, body-effect).
+ * Inserts immediately after the last track of the same type that already
+ * carries a clip with the matching mediaId.
+ */
+export function getTrackInsertionIndexGrouped(
+  tracks: Track[],
+  clips: { trackId: string; mediaId: string }[],
+  trackType: TrackType,
+  mediaId?: string,
+): number {
+  const config = TRACK_TYPE_CONFIG[trackType];
+
+  if (config.reuseStrategy === "per-media-group" && mediaId) {
+    const siblingIndices: number[] = [];
+    tracks.forEach((track, i) => {
+      if (track.type === trackType) {
+        const hasMatch = clips.some(
+          (c) => c.trackId === track.id && c.mediaId === mediaId,
+        );
+        if (hasMatch) siblingIndices.push(i);
+      }
+    });
+    if (siblingIndices.length > 0) {
+      return Math.max(...siblingIndices) + 1;
+    }
+  }
+
+  return getTrackInsertionIndex(tracks, trackType);
+}
+
+/**
+ * Returns the authoritative main-video index, with a compatibility fallback
+ * for projects that do not yet have mainVideoTrackId metadata.
+ */
+export function getMainVideoTrackIndex(
+  tracks: Array<Pick<Track, "id" | "type">>,
+  mainVideoTrackId?: string | null,
+): number {
+  const primaryId = resolvePrimaryVideoTrackId(tracks, mainVideoTrackId);
+  return primaryId ? tracks.findIndex((track) => track.id === primaryId) : -1;
+}
+
+/** Returns true when a track is below the main video row. */
+export function isTrackBelowMainVideo(
+  tracks: Array<Pick<Track, "id" | "type">>,
+  trackId: string,
+  mainVideoTrackId?: string | null,
+): boolean {
+  const mainIndex = getMainVideoTrackIndex(tracks, mainVideoTrackId);
+  const trackIndex = tracks.findIndex((track) => track.id === trackId);
+  return mainIndex >= 0 && trackIndex > mainIndex;
+}
+
+/**
+ * Clamp a proposed insertion so audio always lands at the bottom of the
+ * timeline and visual rows stay above the main video track. This is the final
+ * ordering guard used by drop and history paths, so UI hit-testing cannot
+ * bypass it.
+ */
+export function getSafeTrackInsertionIndex(
+  tracks: Array<Pick<Track, "id" | "type">>,
+  trackType: TrackType,
+  proposedIndex: number,
+  mainVideoTrackId?: string | null,
+): number {
+  const clamped = Math.max(0, Math.min(proposedIndex, tracks.length));
+  if (trackType === "audio") return tracks.length;
+
+  const mainIndex = getMainVideoTrackIndex(tracks, mainVideoTrackId);
+  return mainIndex >= 0 ? Math.min(clamped, mainIndex) : clamped;
+}
+
+/**
+ * Repairs legacy ordering in memory. All non-audio rows are kept above the
+ * main video row and every audio row is moved to the bottom, preserving the
+ * relative order within each group. Callers can persist the normalized result
+ * normally.
+ */
+export function normalizeTrackOrderForMainVideo<
+  T extends Pick<Track, "id" | "type">,
+>(tracks: T[], mainVideoTrackId?: string | null): T[] {
+  const nonAudioTracks = tracks.filter((track) => track.type !== "audio");
+  const audioTracks = tracks.filter((track) => track.type === "audio");
+  const primaryId = resolvePrimaryVideoTrackId(tracks, mainVideoTrackId);
+  if (!primaryId) return [...nonAudioTracks, ...audioTracks];
+
+  const mainTrack = tracks.find((track) => track.id === primaryId);
+  if (!mainTrack) return [...nonAudioTracks, ...audioTracks];
+
+  const nonAudioAboveMain = nonAudioTracks.filter(
+    (track) => track.id !== mainTrack.id,
+  );
+
+  return [
+    ...nonAudioAboveMain,
+    mainTrack,
+    ...audioTracks,
+  ];
+}
+
+/**
+ * Canonical helper to determine which TrackType a clip belongs to.
+ * Ensures text templates, effects, stickers, audio, and visual clips
+ * always resolve to their correct track type when moving, dragging, or creating tracks.
+ */
+export function resolveTrackTypeForClip(
+  clip?: Partial<Clip> | null,
+  sourceTrack?: Pick<Track, "type"> | null,
+  mediaAsset?: { type: string } | null,
+): TrackType {
+  if (!clip) return sourceTrack?.type ?? "video";
+
+  // 1. Explicit trackType in clip
+  if ((clip as any)?.trackType) return (clip as any).trackType;
+
+  // 2. Direct clip.kind
+  if (clip.kind === "text" || clip.kind === "text-template") return "text";
+  if (clip.kind === "sticker") return "sticker";
+  if (clip.kind === "filter") return "filter";
+  if (clip.kind === "video-effect") return "video-effect";
+  if (clip.kind === "body-effect") return "body-effect";
+  if (clip.kind === "animated-overlay") return "animated-overlay";
+  if (clip.kind === "audio") return "audio";
+  if (clip.kind === "video" || clip.kind === "image") return "video";
+
+  // 3. If source track type is known and not video, prefer it
+  if (sourceTrack?.type && sourceTrack.type !== "video") {
+    return sourceTrack.type;
+  }
+
+  // 4. Text heuristics (text clips without explicit kind)
+  if (
+    "text" in clip ||
+    clip.id?.startsWith("text-clip-") ||
+    clip.id?.startsWith("text-") ||
+    (clip as any)?.templateId ||
+    (clip as any)?.styleId ||
+    (clip as any)?.styleDefinition
+  ) {
+    return "text";
+  }
+
+  // 5. Sticker heuristics
+  if (
+    clip.mediaId?.startsWith("sticker-") ||
+    clip.id?.startsWith("sticker-")
+  ) {
+    return "sticker";
+  }
+
+  // 6. Filter & Effect heuristics
+  if (clip.id?.startsWith("filter-clip-")) return "filter";
+  if (clip.id?.startsWith("video-effect-clip-") || (clip as any)?.renderer) {
+    return "video-effect";
+  }
+
+  // 7. Audio heuristics
+  if (mediaAsset?.type === "audio" || (clip as any)?.audioPath) {
+    return "audio";
+  }
+
+  // 8. If source track was video, keep it video
+  if (sourceTrack?.type === "video") {
+    return "video";
+  }
+
+  return "video";
+}
+

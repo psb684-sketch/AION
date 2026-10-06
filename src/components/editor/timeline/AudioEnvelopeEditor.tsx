@@ -1,0 +1,531 @@
+import React, { useState, useRef } from "react";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useHistoryStore } from "@/store/historyStore";
+import { TransformClipCommand } from "@/core/history/commands/TransformCommand";
+import type { Clip } from "@/types";
+import { timeToPixel, pixelToTime } from "@/lib/timeline/timelineViewport";
+import {
+  getPreviewInteractionCoordinator,
+  type PreviewInteractionToken,
+} from "@/core/interactions";
+
+interface AudioEnvelopeEditorProps {
+  clip: Clip;
+  clipWidthPx: number;
+  pixelsPerSecond: number;
+}
+
+export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
+  clip,
+  clipWidthPx,
+  pixelsPerSecond,
+}) => {
+  const updateClip = useTimelineStore((s) => s.updateClip);
+  const { execute } = useHistoryStore();
+  const previewInteractionCoordinator = getPreviewInteractionCoordinator();
+  const previewInteractionRef = useRef<PreviewInteractionToken | null>(null);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const volumeLaneRef = useRef<HTMLDivElement>(null);
+  const dragTargetRef = useRef<HTMLElement | null>(null);
+  const dragValueRef = useRef<number | null>(null);
+  const fadeDragRef = useRef<{
+    type: "fadeIn" | "fadeOut";
+    initialFade: number;
+    pointerId: number;
+  } | null>(null);
+  const fadeDragTargetRef = useRef<HTMLElement | null>(null);
+  const fadeValueRef = useRef<number | null>(null);
+  // PERF (0-B extended / 8-B): RAF coalescing refs.
+  // onPointerMove fires at raw device polling rate (120–240Hz). We stash the
+  // latest event and process it in a single RAF callback per display frame.
+  const envelopeRafRef = useRef<number | null>(null);
+  const pendingEnvelopeMoveRef =
+    useRef<React.PointerEvent<HTMLDivElement> | null>(null);
+
+  const [isHovered, setIsHovered] = useState(false);
+  const [activeDrag, setActiveDrag] = useState<
+    "volume" | "fadeIn" | "fadeOut" | null
+  >(null);
+  const [dragValue, setDragValue] = useState<number | null>(null);
+  const [dragPoint, setDragPoint] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+
+  const dragStartRef = useRef<{
+    startY: number;
+    initialVolume: number;
+    clipHeight: number;
+  } | null>(null);
+
+  const volume = clip.volume ?? 1.0;
+  const fadeIn = clip.fadeIn ?? 0;
+  const fadeOut = clip.fadeOut ?? 0;
+
+  const displayVolume =
+    activeDrag === "volume" && dragValue !== null ? dragValue : volume;
+  // Keep the resting (100%) guide in the center of the clip body, matching
+  // the familiar CapCut-style rubber band instead of confining it to a tiny
+  // footer lane. Lowering volume moves it down; raising it moves it up.
+  const volumeYPercent = 80 - displayVolume * 30;
+  const displayFadeIn =
+    activeDrag === "fadeIn" && dragValue !== null ? dragValue : fadeIn;
+  const displayFadeOut =
+    activeDrag === "fadeOut" && dragValue !== null ? dragValue : fadeOut;
+  const displayFadeInPx = Math.max(
+    0,
+    Math.min(clipWidthPx, timeToPixel(displayFadeIn, pixelsPerSecond)),
+  );
+  const displayFadeOutPx = Math.max(
+    0,
+    Math.min(clipWidthPx, timeToPixel(displayFadeOut, pixelsPerSecond)),
+  );
+  const fadeInPercent =
+    clipWidthPx > 0 ? (displayFadeInPx / clipWidthPx) * 100 : 0;
+  const fadeOutPercent =
+    clipWidthPx > 0
+      ? ((clipWidthPx - displayFadeOutPx) / clipWidthPx) * 100
+      : 100;
+  // The marker stays fully inside the waveform lane. The short vertical
+  // segment below extends its handle to the metadata divider without letting
+  // the knob overlap that row.
+  const fadeMarkerYPercent = 6;
+
+  // ── Volume drag ───────────────────────────────────────────────────────────
+
+  const handleVolumeDragStart = (e: React.PointerEvent<HTMLElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const container = containerRef.current;
+    if (!container) return;
+    previewInteractionRef.current =
+      previewInteractionCoordinator.begin("audio-envelope");
+    const rect = container.getBoundingClientRect();
+    const laneRect = volumeLaneRef.current?.getBoundingClientRect();
+    const point = getTooltipPoint(
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+      rect,
+    );
+    dragStartRef.current = {
+      startY: e.clientY,
+      initialVolume: displayVolume,
+      clipHeight: laneRect?.height || 16,
+    };
+    setActiveDrag("volume");
+    setDragValue(displayVolume);
+    dragValueRef.current = displayVolume;
+    setDragPoint(point);
+    dragTargetRef.current = e.currentTarget;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleFadeDragStart = (
+    e: React.PointerEvent<HTMLElement>,
+    type: "fadeIn" | "fadeOut",
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const initialFade = type === "fadeIn" ? fadeIn : fadeOut;
+    fadeDragRef.current = { type, initialFade, pointerId: e.pointerId };
+    previewInteractionRef.current =
+      previewInteractionCoordinator.begin("audio-envelope");
+    fadeDragTargetRef.current = e.currentTarget;
+    fadeValueRef.current = initialFade;
+    setActiveDrag(type);
+    setDragValue(initialFade);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const updateFadeFromPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = fadeDragRef.current;
+    const lane = volumeLaneRef.current;
+    if (!drag || !lane) return false;
+
+    const rect = lane.getBoundingClientRect();
+    // Clamp pointer to the clip width in pixels so dragging past the clip edge
+    // never produces a fade longer than the clip duration.
+    const localX = Math.max(0, Math.min(clipWidthPx, e.clientX - rect.left));
+    const rawFade =
+      drag.type === "fadeIn"
+        ? pixelToTime(localX, pixelsPerSecond)
+        : pixelToTime(Math.max(0, clipWidthPx - localX), pixelsPerSecond);
+    // Read the opposite fade from the clip's current stored value (not the drag
+    // ref, which tracks the handle being dragged) so the two fades cannot
+    // overlap or together exceed the clip duration.
+    const MAX_FADE_SECONDS = 5;
+    const oppositeFade = drag.type === "fadeIn" ? fadeOut : fadeIn;
+    const maxAllowed = Math.min(
+      MAX_FADE_SECONDS,
+      Math.max(0, clip.duration - oppositeFade),
+    );
+    const nextFade = Math.max(0, Math.min(maxAllowed, rawFade));
+    const field = drag.type;
+
+    // PERF (0-B extended): Skip epoch during drag preview — finishFadeDrag
+    // commits a TransformClipCommand which triggers the real epoch increment.
+    updateClip(clip.id, {
+      [field]: nextFade,
+      _skipEpochIncrement: true,
+    } as Parameters<typeof updateClip>[1]);
+    fadeValueRef.current = nextFade;
+    // Don't call setDragValue here — RAF callback flushes to React state at ≤60fps
+    return true;
+  };
+
+  const finishFadeDrag = (pointerId?: number) => {
+    const drag = fadeDragRef.current;
+    if (!drag) return;
+
+    // Drain any pending RAF before reading the final value
+    if (envelopeRafRef.current !== null) {
+      cancelAnimationFrame(envelopeRafRef.current);
+      envelopeRafRef.current = null;
+    }
+    const pendingMove = pendingEnvelopeMoveRef.current;
+    pendingEnvelopeMoveRef.current = null;
+    if (pendingMove) applyEnvelopeMove(pendingMove);
+
+    const finalFade = fadeValueRef.current ?? drag.initialFade;
+    const field = drag.type;
+    const target = fadeDragTargetRef.current;
+    fadeDragRef.current = null;
+    fadeDragTargetRef.current = null;
+    fadeValueRef.current = null;
+    setActiveDrag(null);
+    setDragValue(null);
+    if (pointerId !== undefined && target?.hasPointerCapture(pointerId)) {
+      target.releasePointerCapture(pointerId);
+    }
+
+    if (finalFade !== drag.initialFade) {
+      execute(
+        new TransformClipCommand(
+          clip.id,
+          { [field]: drag.initialFade },
+          { [field]: finalFade },
+        ),
+      );
+    }
+    if (previewInteractionRef.current) {
+      previewInteractionCoordinator.commit(previewInteractionRef.current);
+      previewInteractionRef.current = null;
+    }
+  };
+
+  // PERF (0-B extended / 8-B): Real work is done here, called from the RAF
+  // callback at most once per display frame (~60fps) rather than at raw pointer
+  // polling rate (120–240Hz). updateClip and setDragValue are called at most once
+  // per frame instead of on every raw event.
+  const applyEnvelopeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (updateFadeFromPointer(e)) {
+      // Fade drag: flush latest fadeValueRef to React state for tooltip display
+      const latest = fadeValueRef.current;
+      if (latest !== null) setDragValue(latest);
+      return;
+    }
+    // Volume drag path
+    if (!dragStartRef.current) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const deltaY = e.clientY - dragStartRef.current.startY;
+    const deltaVol = -deltaY / (dragStartRef.current.clipHeight * 0.8);
+    const nextVol = Math.max(
+      0,
+      Math.min(1.0, dragStartRef.current.initialVolume + deltaVol),
+    );
+    // PERF (0-B extended): Skip epoch during drag preview — finishVolumeDrag
+    // commits a TransformClipCommand which triggers the real epoch increment.
+    updateClip(clip.id, {
+      volume: nextVol,
+      _skipEpochIncrement: true,
+    } as Parameters<typeof updateClip>[1]);
+    dragValueRef.current = nextVol;
+    // Flush to React state for the live tooltip (capped at RAF rate, ~60fps)
+    setDragValue(nextVol);
+    setDragPoint(
+      getTooltipPoint(e.clientX - rect.left, e.clientY - rect.top, rect),
+    );
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    // PERF (0-B extended / 8-B): Stash the latest event; schedule one RAF per
+    // display frame. Many raw pointer events collapse to one store write + one
+    // React state update.
+    // We must persist the synthetic event before the RAF fires because React
+    // recycles SyntheticEvent objects. e.persist() opts out of pooling.
+    e.persist();
+    pendingEnvelopeMoveRef.current = e;
+    if (envelopeRafRef.current !== null) return; // RAF already queued
+    envelopeRafRef.current = requestAnimationFrame(() => {
+      envelopeRafRef.current = null;
+      const pending = pendingEnvelopeMoveRef.current;
+      pendingEnvelopeMoveRef.current = null;
+      if (pending) applyEnvelopeMove(pending);
+    });
+  };
+
+  const finishVolumeDrag = (pointerId?: number) => {
+    if (!dragStartRef.current) return;
+
+    // Drain any pending RAF before reading the final value
+    if (envelopeRafRef.current !== null) {
+      cancelAnimationFrame(envelopeRafRef.current);
+      envelopeRafRef.current = null;
+    }
+    const pendingMove = pendingEnvelopeMoveRef.current;
+    pendingEnvelopeMoveRef.current = null;
+    if (pendingMove) applyEnvelopeMove(pendingMove);
+
+    const initialVolume = dragStartRef.current.initialVolume;
+    const finalVolume = dragValueRef.current ?? clip.volume ?? 1.0;
+    const dragTarget = dragTargetRef.current;
+    dragTargetRef.current = null;
+    dragStartRef.current = null;
+    dragValueRef.current = null;
+    setActiveDrag(null);
+    setDragValue(null);
+    setDragPoint(null);
+    if (pointerId !== undefined && dragTarget?.hasPointerCapture(pointerId)) {
+      dragTarget.releasePointerCapture(pointerId);
+    }
+    if (finalVolume !== initialVolume) {
+      // The pointer-move updates are previews. Re-assert the final value before
+      // recording history so a stale parent clip prop cannot restore the default.
+      if ((clip.volume ?? 1.0) !== finalVolume) {
+        updateClip(clip.id, { volume: finalVolume });
+      }
+      execute(
+        new TransformClipCommand(
+          clip.id,
+          { volume: initialVolume },
+          { volume: finalVolume },
+        ),
+      );
+    }
+    if (previewInteractionRef.current) {
+      previewInteractionCoordinator.commit(previewInteractionRef.current);
+      previewInteractionRef.current = null;
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (fadeDragRef.current) {
+      finishFadeDrag(e.pointerId);
+      return;
+    }
+    finishVolumeDrag(e.pointerId);
+  };
+
+  const handleVolumeDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (volume !== 1.0) {
+      const token = previewInteractionCoordinator.begin("property-edit");
+      execute(new TransformClipCommand(clip.id, { volume }, { volume: 1.0 }));
+      previewInteractionCoordinator.commit(token);
+    }
+  };
+
+  // ── Keyframes ─────────────────────────────────────────────────────────────
+
+  const removeAudioKeyframe = useTimelineStore((s) => s.removeAudioKeyframe);
+  const keyframes = clip.volumeKeyframes || [];
+
+  function getTooltipPoint(x: number, y: number, rect: DOMRect) {
+    const halfTooltipWidth = 28;
+    const minX = Math.min(halfTooltipWidth, rect.width / 2);
+    const maxX = Math.max(minX, rect.width - halfTooltipWidth);
+    const minY = Math.min(22, rect.height / 2);
+    const maxY = Math.max(minY, rect.height - 4);
+    return {
+      x: Math.max(minX, Math.min(maxX, x)),
+      y: Math.max(minY, Math.min(maxY, y)),
+    };
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <div
+      ref={containerRef}
+      onPointerEnter={() => setIsHovered(true)}
+      onPointerLeave={() => setIsHovered(false)}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onLostPointerCapture={handlePointerUp}
+      className="absolute inset-0 z-40 pointer-events-none select-none overflow-hidden"
+    >
+      {/* CapCut-style waveform-lane envelope overlay. */}
+      <div ref={volumeLaneRef} className="absolute inset-0 pointer-events-none">
+        {/* Fade shading and curved envelope guides. */}
+        <svg
+          className="absolute inset-0 z-[45] h-full w-full pointer-events-none"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          {displayFadeInPx > 0 && (
+            <>
+              <path
+                d={`M 0 0 L ${fadeInPercent} 0 L ${fadeInPercent} ${fadeMarkerYPercent} C ${fadeInPercent * 0.55} 12 ${fadeInPercent * 0.18} 72 0 100 Z`}
+                fill="var(--clypra-clip-envelope-fill)"
+              />
+              <path
+                d={`M 0 100 C ${fadeInPercent * 0.18} 72 ${fadeInPercent * 0.55} 12 ${fadeInPercent} ${fadeMarkerYPercent}`}
+                fill="none"
+                stroke="var(--clypra-clip-envelope-line)"
+                strokeWidth="0.9"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            </>
+          )}
+          {displayFadeOutPx > 0 && (
+            <>
+              <path
+                d={`M ${fadeOutPercent} 0 L 100 0 L 100 100 C ${fadeOutPercent + (100 - fadeOutPercent) * 0.82} 72 ${fadeOutPercent + (100 - fadeOutPercent) * 0.45} 12 ${fadeOutPercent} ${fadeMarkerYPercent} Z`}
+                fill="var(--clypra-clip-envelope-fill)"
+              />
+              <path
+                d={`M ${fadeOutPercent} ${fadeMarkerYPercent} C ${fadeOutPercent + (100 - fadeOutPercent) * 0.45} 12 ${fadeOutPercent + (100 - fadeOutPercent) * 0.82} 72 100 100`}
+                fill="none"
+                stroke="var(--clypra-clip-envelope-line)"
+                strokeWidth="0.9"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            </>
+          )}
+        </svg>
+
+        {/* Full-height invisible fade handles: the entire envelope remains
+            easy to grab while the marker stays visually attached only to the
+            curve endpoint. */}
+        <button
+          type="button"
+          aria-label="Fade in handle"
+          data-testid="audio-fade-in-handle"
+          className={`absolute top-0 z-50 h-full w-4 -translate-x-1/2 rounded-none border-0 bg-transparent p-0 pointer-events-auto ${activeDrag === "fadeIn" ? "cursor-grabbing" : "cursor-grab"}`}
+          style={{
+            left: `${displayFadeInPx}px`,
+            top: 0,
+            height: "100%",
+            touchAction: "none",
+          }}
+          onPointerDown={(event) => handleFadeDragStart(event, "fadeIn")}
+          title={`Fade in: ${displayFadeIn.toFixed(2)}s — drag right to set`}
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
+            style={{
+              top: `${fadeMarkerYPercent}%`,
+              backgroundColor: "var(--clypra-clip-control-bg)",
+              borderColor: "var(--clypra-clip-control-border)",
+              boxShadow: "var(--clypra-clip-control-shadow)",
+            }}
+          />
+        </button>
+        <button
+          type="button"
+          aria-label="Fade out handle"
+          data-testid="audio-fade-out-handle"
+          className={`absolute top-0 z-50 h-full w-4 -translate-x-1/2 rounded-none border-0 bg-transparent p-0 pointer-events-auto ${activeDrag === "fadeOut" ? "cursor-grabbing" : "cursor-grab"}`}
+          style={{
+            left: `${clipWidthPx - displayFadeOutPx}px`,
+            top: 0,
+            height: "100%",
+            touchAction: "none",
+          }}
+          onPointerDown={(event) => handleFadeDragStart(event, "fadeOut")}
+          title={`Fade out: ${displayFadeOut.toFixed(2)}s — drag left to set`}
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
+            style={{
+              top: `${fadeMarkerYPercent}%`,
+              backgroundColor: "var(--clypra-clip-control-bg)",
+              borderColor: "var(--clypra-clip-control-border)",
+              boxShadow: "var(--clypra-clip-control-shadow)",
+            }}
+          />
+        </button>
+
+        {/* Volume keyframe diamonds */}
+        {keyframes.map((kf) => {
+          const kfX = Math.max(
+            0,
+            Math.min(clipWidthPx, timeToPixel(kf.time, pixelsPerSecond)),
+          );
+
+          const kfYPercent = 80 - Math.min(1, kf.gain) * 30;
+          return (
+            <div
+              key={kf.id}
+              className="absolute z-30 h-2.5 w-2.5 rotate-45 cursor-grab border pointer-events-auto transition-transform hover:scale-125"
+              style={{
+                left: `${kfX}px`,
+                top: `${kfYPercent}%`,
+                transform: "translate(-50%, -50%) rotate(45deg)",
+                backgroundColor: "var(--clypra-clip-keyframe-bg)",
+                borderColor: "var(--clypra-clip-keyframe-border)",
+                boxShadow: "var(--clypra-clip-keyframe-shadow)",
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                removeAudioKeyframe(clip.id, kf.id);
+              }}
+              title={`Keyframe: ${(kf.gain * 100).toFixed(0)}% at ${kf.time.toFixed(2)}s (Right-click to remove)`}
+            />
+          );
+        })}
+
+        {/* Full-width, vertically draggable volume rubber band. */}
+        <div
+          role="slider"
+          aria-label="Clip volume"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(displayVolume * 100)}
+          className={`absolute left-1 right-1 z-30 h-4 -translate-y-1/2 cursor-ns-resize pointer-events-auto transition-opacity ${
+            isHovered || activeDrag === "volume" ? "opacity-100" : "opacity-70"
+          }`}
+          style={{ top: `${volumeYPercent}%`, touchAction: "none" }}
+          onPointerDown={handleVolumeDragStart}
+          onDoubleClick={handleVolumeDoubleClick}
+          title={`Volume: ${Math.round(displayVolume * 100)}% — drag up/down; double-click to reset`}
+        >
+          <div
+            className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 rounded-full"
+            style={{
+              backgroundColor: "var(--clypra-clip-volume-line)",
+              boxShadow: "var(--clypra-clip-volume-shadow)",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Live volume tooltip during drag */}
+      {activeDrag === "volume" && dragValue !== null && dragPoint !== null && (
+        <div
+          className="absolute z-60 flex -translate-x-1/2 -translate-y-full -mt-1 items-center justify-center rounded border px-1.5 py-0.5 text-[9px] font-bold pointer-events-none whitespace-nowrap"
+          style={{
+            left: dragPoint.x,
+            top: dragPoint.y,
+            backgroundColor: "var(--clypra-clip-tooltip-bg)",
+            borderColor: "var(--clypra-clip-tooltip-border)",
+            color: "var(--clypra-clip-tooltip-text)",
+            boxShadow: "var(--clypra-clip-control-shadow)",
+          }}
+        >
+          Vol {Math.round(dragValue * 100)}%
+        </div>
+      )}
+    </div>
+  );
+};

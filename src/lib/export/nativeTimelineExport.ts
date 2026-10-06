@@ -1,0 +1,334 @@
+import type {
+  Clip,
+  MediaAsset,
+  Project,
+  Track,
+  TransitionTimelineItem,
+} from "@/types";
+import { toNativePath } from "@/lib/platform/pathConversion";
+import { expandCompoundClips } from "@/core/timeline/compoundClips";
+import { evaluateEffectiveAudioState } from "@/core/audio/effectiveAudioState";
+import { getClipAudioProperties } from "@/types/audio";
+
+export interface NativeTimelineClipPlan {
+  path: string;
+  trimIn: number;
+  duration: number;
+  frameCount: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  volume: number;
+}
+
+export interface NativeTimelineExportPlan {
+  outputPath: string;
+  width: number;
+  height: number;
+  frameRate: number;
+  codec: "h264" | "h265" | "prores";
+  preset: "ultrafast" | "fast" | "medium" | "slow" | "veryslow";
+  crf: number;
+  pixelFormat: "yuv420p" | "yuv444p" | "yuv422p10le";
+  totalDuration: number;
+  clips: NativeTimelineClipPlan[];
+}
+
+interface NativeTimelineExportInput {
+  clips: Clip[];
+  tracks: Track[];
+  transitions: TransitionTimelineItem[];
+  assets: MediaAsset[];
+  project: Project | null;
+  startTime: number;
+  endTime: number;
+  outputPath: string;
+  width: number;
+  height: number;
+  frameRate: number;
+  codec: NativeTimelineExportPlan["codec"];
+  preset: NativeTimelineExportPlan["preset"];
+  crf: number;
+  pixelFormat: NativeTimelineExportPlan["pixelFormat"];
+}
+
+export type NativeTimelineExportEligibility =
+  | { eligible: true; plan: NativeTimelineExportPlan }
+  | { eligible: false; reasons: string[] };
+
+interface NativeTimelineRunCallbacks {
+  onProgress?: (progress: {
+    currentFrame: number;
+    totalFrames: number;
+    progress: number;
+    etaSeconds: number;
+    fps: number;
+    rtf?: number;
+  }) => void;
+  signal?: AbortSignal;
+  onSessionReady?: (cancel: () => Promise<void>) => void;
+}
+
+export interface NativeTimelineRunResult {
+  completedFrames: number;
+  totalTimeMs: number;
+  cancelled: boolean;
+  peakRssBytes: number;
+}
+
+const roundPlacement = (value: number): number => Math.round(value);
+
+/**
+ * Finds cut-only timelines that Rust can normalize and encode without routing
+ * every frame through WebKit or a browser compositor.
+ */
+export function analyzeNativeTimelineExport(
+  input: NativeTimelineExportInput,
+): NativeTimelineExportEligibility {
+  const reasons: string[] = [];
+  const { project, startTime, endTime, frameRate } = input;
+
+  if (!project) {
+    return { eligible: false, reasons: ["Project settings are unavailable"] };
+  }
+
+  const videoTracks = input.tracks.filter(
+    (track) => track.type === "video" && track.visible,
+  );
+  if (videoTracks.length !== 1) {
+    reasons.push("Native export requires exactly one visible video track");
+  }
+
+  if (input.transitions.length > 0) {
+    reasons.push("Timeline transitions require compositor export");
+  }
+
+  const primaryTrackId = videoTracks[0]?.id;
+  const expandedClips = expandCompoundClips(input.clips);
+  const activeClips = expandedClips
+    .filter(
+      (clip) =>
+        clip.startTime < endTime &&
+        clip.startTime + clip.duration > startTime,
+    )
+    .sort((left, right) => left.startTime - right.startTime);
+
+  const videoAssetIds = new Set(
+    input.assets.filter((a) => a.type === "video").map((a) => a.id),
+  );
+  // EX-6 fix: only count video-asset clips when checking whether all active clips
+  // are on the primary track. Audio-only clips are handled natively by FFmpeg's audio
+  // mixer in both the fast-path and compositor-path — they do not need compositor rendering.
+  // Previously, a project with one video track + one audio track was incorrectly sent to
+  // the compositor path because activeClips.length included audio clips.
+  const activeVideoAssetClips = activeClips.filter((clip) =>
+    videoAssetIds.has(clip.mediaId),
+  );
+  const activeTextClips = activeClips.filter(
+    (clip) => clip.kind === "text" || (clip as Clip & { layerType?: string }).layerType === "text",
+  );
+  const standaloneAudioClips = activeClips.filter((clip) => {
+    const asset = input.assets.find((candidate) => candidate.id === clip.mediaId);
+    const directAudioPath = (clip as Clip & { audioPath?: string }).audioPath;
+    return (
+      clip.kind === "audio" ||
+      asset?.type === "audio" ||
+      Boolean(directAudioPath)
+    );
+  });
+
+  // The native cut-only path can mux audio embedded in each video source, but
+  // its plan does not carry independent timeline audio clips. Route those
+  // projects through exportVideo so getActiveAudioClips() can build the full
+  // FFmpeg mix instead of silently dropping standalone audio.
+  if (standaloneAudioClips.length > 0) {
+    reasons.push("Standalone timeline audio requires the audio-mix export path");
+  }
+
+  // Text is compositor content, not a property of the source video. The
+  // cut-only native plan has no text-layer payload, so allowing a text clip
+  // here would silently produce a video-only export and bypass text preflight.
+  if (activeTextClips.length > 0) {
+    reasons.push("Text clips require compositor export");
+  }
+
+  const videoClips = activeVideoAssetClips.filter(
+    (clip) => clip.trackId === primaryTrackId,
+  );
+
+  if (activeVideoAssetClips.length !== videoClips.length) {
+    reasons.push("Additional visual clips on separate tracks require compositor export");
+  }
+  if (videoClips.length === 0) {
+    reasons.push("Timeline has no video clips to export");
+  }
+
+  const frameTolerance = 0.5 / frameRate;
+  let expectedStart = startTime;
+  for (const clip of videoClips) {
+    if (Math.abs(clip.startTime - expectedStart) > frameTolerance) {
+      reasons.push("Video clips must be sequential without gaps or overlaps");
+      break;
+    }
+    expectedStart = clip.startTime + clip.duration;
+  }
+  if (
+    videoClips.length > 0 &&
+    Math.abs(expectedStart - endTime) > frameTolerance
+  ) {
+    reasons.push("Video clips must cover the complete export range");
+  }
+
+  for (const clip of videoClips) {
+    const asset = input.assets.find((candidate) => candidate.id === clip.mediaId);
+    if (!asset || asset.type !== "video" || !asset.path) {
+      reasons.push(`Clip ${clip.id} does not reference a local video asset`);
+    }
+    if (
+      clip.opacity !== 1 ||
+      clip.rotation !== 0 ||
+      (clip.effects?.length ?? 0) > 0 ||
+      (clip.overlays?.length ?? 0) > 0 ||
+      clip.filter
+    ) {
+      reasons.push(`Clip ${clip.id} uses compositor-only visual settings`);
+    }
+
+    const audio = getClipAudioProperties(clip);
+    const hasAudioEffects = Boolean(audio.effects && Object.keys(audio.effects).length > 0);
+    const hasUnsupportedAudioSettings =
+      audio.pan !== 0 ||
+      audio.volumeKeyframes.length > 0 ||
+      audio.fadeIn.duration > 0 ||
+      audio.fadeOut.duration > 0 ||
+      hasAudioEffects ||
+      audio.speed.preservePitch ||
+      audio.channelConfig.mode !== "auto" ||
+      audio.channelConfig.downmix !== "auto" ||
+      Boolean(audio.channelConfig.channelMap?.length);
+    if (hasUnsupportedAudioSettings) {
+      reasons.push(`Clip ${clip.id} uses audio features that require the audio-mix export path`);
+    }
+  }
+
+  if (reasons.length > 0) {
+    return { eligible: false, reasons: [...new Set(reasons)] };
+  }
+
+  const scaleX = input.width / project.canvasWidth;
+  const scaleY = input.height / project.canvasHeight;
+  const clips = videoClips.map((clip): NativeTimelineClipPlan => {
+    const asset = input.assets.find(
+      (candidate) => candidate.id === clip.mediaId,
+    )!;
+    const overlapStart = Math.max(startTime, clip.startTime);
+    const overlapEnd = Math.min(endTime, clip.startTime + clip.duration);
+    const firstFrame = Math.round((overlapStart - startTime) * input.frameRate);
+    const endFrame = Math.round((overlapEnd - startTime) * input.frameRate);
+
+    const track = input.tracks.find((candidate) => candidate.id === clip.trackId);
+    const effectiveAudio = evaluateEffectiveAudioState(clip, track, clip.startTime, {
+      tracks: input.tracks,
+    });
+    const volume = Math.max(0, Math.min(3.0, effectiveAudio.staticGain));
+
+    return {
+      path: toNativePath(asset.path),
+      trimIn: clip.trimIn + overlapStart - clip.startTime,
+      duration: overlapEnd - overlapStart,
+      frameCount: endFrame - firstFrame,
+      x: roundPlacement(clip.x * scaleX),
+      y: roundPlacement(clip.y * scaleY),
+      width: Math.max(1, roundPlacement(clip.width * scaleX)),
+      height: Math.max(1, roundPlacement(clip.height * scaleY)),
+      volume,
+    };
+  });
+
+  return {
+    eligible: true,
+    plan: {
+      outputPath: toNativePath(input.outputPath),
+      width: input.width,
+      height: input.height,
+      frameRate: input.frameRate,
+      codec: input.codec,
+      preset: input.preset,
+      crf: input.crf,
+      pixelFormat: input.pixelFormat,
+      totalDuration: endTime - startTime,
+      clips,
+    },
+  };
+}
+
+export async function runNativeTimelineExport(
+  plan: NativeTimelineExportPlan,
+  callbacks: NativeTimelineRunCallbacks,
+): Promise<NativeTimelineRunResult> {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+    throw new Error("Native timeline export requires the Tauri runtime");
+  }
+  const { invoke, Channel } = await import("@tauri-apps/api/core");
+  let completedFrames = 0;
+  let cancelled = false;
+  const progressChannel = new Channel<{
+    currentFrame: number;
+    totalFrames: number;
+    progress: number;
+    etaSeconds: number;
+    fps: number;
+    rtf?: number;
+  }>();
+  progressChannel.onmessage = (progress) => {
+    completedFrames = progress.currentFrame;
+    callbacks.onProgress?.(progress);
+  };
+
+  const sessionId = await invoke<string>("start_native_timeline_export", {
+    plan,
+    onProgress: progressChannel,
+  });
+
+  const performCancel = async () => {
+    cancelled = true;
+    await invoke("cancel_native_timeline_export", { sessionId }).catch(() => {});
+  };
+
+  callbacks.onSessionReady?.(performCancel);
+
+  if (callbacks.signal) {
+    if (callbacks.signal.aborted) {
+      await performCancel();
+    } else {
+      callbacks.signal.addEventListener("abort", () => {
+        performCancel().catch(() => {});
+      }, { once: true });
+    }
+  }
+
+  try {
+    const completion = await invoke<{
+      totalFrames: number;
+      totalTimeMs: number;
+      peakRssBytes: number;
+    }>("finalize_native_timeline_export", { sessionId });
+    return {
+      completedFrames: completion.totalFrames,
+      totalTimeMs: completion.totalTimeMs,
+      cancelled: false,
+      peakRssBytes: completion.peakRssBytes,
+    };
+  } catch (error) {
+    if (cancelled) {
+      return {
+        completedFrames,
+        totalTimeMs: 0,
+        cancelled: true,
+        peakRssBytes: 0,
+      };
+    }
+    throw error;
+  }
+}

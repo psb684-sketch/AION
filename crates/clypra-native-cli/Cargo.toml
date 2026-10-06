@@ -1,0 +1,24 @@
+[package]
+name = "clypra-native-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Headless validation and golden-test entry point for the Clypra native core"
+license = "MIT"
+
+[dependencies]
+clypra-native-core = { path = "../clypra-native-core" }
+bytemuck = { version = "1.21", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+web-time = "1"
+wgpu = "24.0"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+]

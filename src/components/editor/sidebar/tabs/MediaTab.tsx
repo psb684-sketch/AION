@@ -1,0 +1,348 @@
+import React, { useState, useCallback, useMemo } from "react";
+import { CloudUpload, AlertTriangle, Smartphone } from "lucide-react";
+import { platform } from "@/core/platform";
+
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ContextMenu } from "@/components/ui/ContextMenu";
+import { useMediaImport } from "@/hooks/useMediaImport";
+import { useFileDrop } from "@/hooks/useFileDrop";
+import { useProjectStore } from "@/store/projectStore";
+import { useUIStore } from "@/store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useHistoryStore } from "@/store/historyStore";
+import { useSettingsStore } from "@/store/settingsStore";
+import { RippleDeleteCommand } from "@/core/history/commands/RippleDeleteCommand";
+import { DeleteClipCommand } from "@/core/history/commands/DeleteClipCommand";
+import type { VideoMetadata } from "@/types";
+import type { MediaTabProps } from "../types";
+import { generateId } from "@/lib/utils/id";
+import { MediaCard } from "@/components/ui/MediaCard";
+
+export const MediaTab: React.FC<MediaTabProps> = ({ onAddToTimeline }) => {
+  const { mediaAssets, removeMediaAsset, addMediaAsset } = useProjectStore();
+  const { importMedia, isLoading } = useMediaImport();
+  // previewMediaId is used for visual selection state only.
+  // Preview rendering is now timeline-driven, not media-selection driven.
+  const { setPreviewMedia, previewMediaId } = useUIStore();
+  const { clips } = useTimelineStore();
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    mediaId: string;
+  } | null>(null);
+
+  // Track which media assets are used in the timeline
+  const usedMediaIds = useMemo(() => {
+    return new Set(clips.map((clip) => clip.mediaId));
+  }, [clips]);
+
+  const missingAssets = useMemo(() => {
+    return mediaAssets.filter((a) => a.isMissing);
+  }, [mediaAssets]);
+
+  const getMediaType = (path: string): "video" | "audio" | "image" => {
+    const lower = path.toLowerCase();
+    if (/\.(mp4|mov|mkv|webm|flv)$/i.test(lower)) return "video";
+    if (/\.(mp3|wav|aac|flac|m4a)$/i.test(lower)) return "audio";
+    return "image";
+  };
+
+  const handleTauriFileDrop = useCallback(
+    async (paths: string[]) => {
+      const CONCURRENCY_LIMIT = 4;
+      let currentIndex = 0;
+
+      const workers = Array.from(
+        { length: Math.min(CONCURRENCY_LIMIT, paths.length) },
+        async () => {
+          while (currentIndex < paths.length) {
+            const filePath = paths[currentIndex++];
+            try {
+              const filename =
+                filePath.split("/").pop() ||
+                filePath.split("\\").pop() ||
+                "Unknown";
+              const type = getMediaType(filename);
+
+              // Check if asset already exists
+              const currentAssets = useProjectStore.getState().mediaAssets;
+              const existingAsset = currentAssets.find(
+                (a) => a.path === filePath,
+              );
+              if (existingAsset) {
+                continue;
+              }
+
+              // Import new asset
+              if (type === "video" || type === "audio") {
+                // Phase 1 (Instant): Probe metadata and add asset immediately
+                const metadata = await platform.getMediaMetadata(filePath);
+
+                const asset = {
+                  id: generateId("asset"),
+                  name: filename,
+                  path: filePath,
+                  type,
+                  duration: metadata.duration,
+                  width: metadata.width,
+                  height: metadata.height,
+                  posterFrame: undefined,
+                  size: metadata.size || 0,
+                };
+
+                addMediaAsset(asset);
+
+                // Phase 2 (Async Background): Extract poster frame without blocking UI
+                if (type === "video") {
+                  platform
+                    .extractPosterFrame(
+                      filePath,
+                      metadata.duration,
+                      window.devicePixelRatio || 1.0,
+                    )
+                    .then((posterFrame) => {
+                      if (posterFrame) {
+                        useProjectStore
+                          .getState()
+                          .updateMediaAsset(asset.id, { posterFrame });
+                      }
+                    })
+                    .catch((err) => {
+                      console.warn(
+                        `[MediaTab] Failed to extract poster for ${filePath}:`,
+                        err,
+                      );
+                    });
+
+                  const ext = filename.split(".").pop()?.toLowerCase() || "";
+                  const needsRemux = [
+                    "mkv",
+                    "avi",
+                    "flv",
+                    "wmv",
+                    "ts",
+                    "mts",
+                    "m2ts",
+                    "vob",
+                    "3gp",
+                    "ogv",
+                  ].includes(ext);
+                  if (needsRemux && platform.getOrCreatePreviewVideo) {
+                    platform
+                      .getOrCreatePreviewVideo(filePath)
+                      .then((previewPath) => {
+                        if (previewPath) {
+                          useProjectStore
+                            .getState()
+                            .updateMediaAsset(asset.id, { previewPath });
+                        }
+                      })
+                      .catch((err) => {
+                        console.warn(
+                          `[MediaTab] Failed to optimize preview for ${filePath}:`,
+                          err,
+                        );
+                      });
+                  }
+                }
+              } else {
+                const asset = {
+                  id: generateId("asset"),
+                  name: filename,
+                  path: filePath,
+                  type: "image" as const,
+                  duration: 0,
+                  size: 0,
+                  posterFrame: platform.convertFileSrc(filePath),
+                };
+
+                addMediaAsset(asset);
+              }
+            } catch (error) {
+              console.error(`[MediaTab] Failed to import ${filePath}:`, error);
+              useProjectStore
+                .getState()
+                .showToast(
+                  `Failed to import ${filePath.split("/").pop() || "file"}`,
+                  "error",
+                );
+            }
+          }
+        },
+      );
+
+      await Promise.all(workers);
+    },
+    [addMediaAsset],
+  );
+
+  // Use the file drop hook
+  const { containerRef, isDraggingOver } = useFileDrop({
+    onDrop: handleTauriFileDrop,
+    enabled: true,
+  });
+
+  return (
+    <div
+      ref={containerRef}
+      className={`flex-1 flex flex-col overflow-hidden transition-colors duration-200 ${isDraggingOver ? "bg-accent/5" : ""}`}
+    >
+      <div className="p-1 border-b border-border flex gap-1">
+        <Button
+          variant="secondary"
+          size="sm"
+          className="flex-1 border-dashed cursor-pointer"
+          onClick={importMedia}
+          disabled={isLoading}
+        >
+          <CloudUpload className="w-4 h-4" />
+          {isLoading ? "Importing..." : "Import Media"}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="border-dashed cursor-pointer text-accent hover:bg-accent/10 px-2.5 shrink-0"
+          onClick={() => useUIStore.getState().setTransferModal(true)}
+          title="Transfer from Phone (Local WiFi)"
+        >
+          <Smartphone className="w-4 h-4" />
+        </Button>
+      </div>
+
+      {missingAssets.length > 0 && (
+        <div
+          data-testid="missing-media-banner"
+          className="m-1.5 p-2 bg-red-950/40 border border-red-500/30 rounded-lg flex items-center justify-between gap-2"
+        >
+          <div className="flex items-center gap-1.5 text-xs text-red-300">
+            <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+            <span className="font-medium">
+              {missingAssets.length} offline file
+              {missingAssets.length > 1 ? "s" : ""}
+            </span>
+          </div>
+          <Button
+            variant="secondary"
+            size="xs"
+            className="text-[10px] h-6 px-2 border-red-500/40 text-red-200 hover:bg-red-500/20 cursor-pointer"
+            onClick={() => {
+              if (missingAssets[0]) {
+                void useProjectStore
+                  .getState()
+                  .promptRelinkMedia(missingAssets[0].id);
+              }
+            }}
+          >
+            Relink...
+          </Button>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {mediaAssets.length === 0 ? (
+          <EmptyState
+            icon={CloudUpload}
+            title="No media imported"
+            description="Import videos, audio, or images to get started"
+          />
+        ) : (
+          <div className="grid grid-cols-2 gap-2 p-1">
+            {mediaAssets.map((asset) => (
+              <MediaCard
+                key={asset.id}
+                asset={asset}
+                isSelected={previewMediaId === asset.id}
+                isUsedInTimeline={usedMediaIds.has(asset.id)}
+                onClick={() => setPreviewMedia(asset.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setContextMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    mediaId: asset.id,
+                  });
+                }}
+                onAddToTimeline={() => onAddToTimeline?.(asset, "media")}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {contextMenu && (
+        <ContextMenu
+          items={[
+            {
+              label: "Relink Media...",
+              onClick: () => {
+                const targetMediaId = contextMenu.mediaId;
+                setContextMenu(null);
+                void useProjectStore
+                  .getState()
+                  .promptRelinkMedia(targetMediaId);
+              },
+            },
+            usedMediaIds.has(contextMenu.mediaId)
+              ? {
+                  label: "Remove from Timeline",
+                  onClick: () => {
+                    const {
+                      normalizeTrack,
+                      removeEmptyNonMainTracks,
+                      withBatch,
+                    } = useTimelineStore.getState();
+                    const { execute, beginTransaction, commitTransaction } =
+                      useHistoryStore.getState();
+                    const affectedTracks = new Set<string>();
+
+                    // Find all clips using this media asset
+                    const clipsToRemove = clips.filter(
+                      (c) => c.mediaId === contextMenu.mediaId,
+                    );
+
+                    // Use transaction to group all deletes into a single undo/redo unit
+                    beginTransaction("Remove from Timeline");
+
+                    // Remove all clips using this asset
+                    const { rippleEditEnabled } = useTimelineStore.getState();
+                    clipsToRemove.forEach((clip) => {
+                      affectedTracks.add(clip.trackId);
+                      // Use ripple delete if ripple mode is enabled, otherwise regular delete
+                      if (rippleEditEnabled) {
+                        execute(new RippleDeleteCommand(clip.id));
+                      } else {
+                        execute(new DeleteClipCommand(clip.id));
+                      }
+                    });
+
+                    commitTransaction();
+
+                    // Remove empty tracks after deletion (not part of undo/redo)
+                    withBatch(() => {
+                      removeEmptyNonMainTracks(Array.from(affectedTracks));
+                    });
+                  },
+                }
+              : {
+                  label: "Add to Track",
+                  onClick: () => {
+                    const asset = mediaAssets.find(
+                      (a) => a.id === contextMenu.mediaId,
+                    );
+                    if (asset) onAddToTimeline?.(asset, "media");
+                  },
+                },
+            {
+              label: "Delete",
+              onClick: () => removeMediaAsset(contextMenu.mediaId),
+              danger: true,
+            },
+          ]}
+          position={{ x: contextMenu.x, y: contextMenu.y }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+    </div>
+  );
+};

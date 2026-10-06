@@ -1,0 +1,943 @@
+import React, {
+  useRef,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
+import { Plus, X, RotateCcw, Play, Loader2 } from "lucide-react";
+import { platform } from "@/core/platform";
+import { useUIStore } from "@/store/uiStore";
+import { usePreviewMode } from "@/hooks/usePreviewMode";
+import {
+  getInsertIndexForNewTrack,
+  useTimelineStore,
+} from "@/store/timelineStore";
+import { useProjectStore } from "@/store/projectStore";
+import { createClipFromAsset } from "@/lib/timeline/timelineClip";
+import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
+import { autoAdaptSequenceForFirstVisualClip } from "@/lib/timeline/sequenceAutoAspect";
+import {
+  DEFAULT_PLACEMENT_POLICY,
+  resolveAddToTimelinePlacement,
+  resolveDefaultFitModeForAsset,
+} from "@/lib/timeline/placementPolicy";
+import { getPlaybackClock } from "@/hooks/usePlaybackClock";
+import type { SourcePlaybackContext } from "@/core/playback";
+import { TimelinePlacementEngine } from "@/lib/timeline/placementEngine";
+import type { MediaAsset } from "@/types";
+import { formatTime } from "@/lib/utils/timeFormatting";
+import { PreviewTransport } from "./PreviewTransport";
+import {
+  createTextClip,
+  resolveTextEffectDefinition,
+} from "@/lib/text/textClip";
+import { TextSourcePreview } from "./TextSourcePreview";
+import { useStickersStore } from "@/features/stickers/store/stickersStore";
+import { VideoSourcePreview } from "./VideoSourcePreview";
+import { AudioSourcePreview } from "./AudioSourcePreview";
+import { ImageSourcePreview } from "./ImageSourcePreview";
+import {
+  StickerSourcePreview,
+  type StickerSourcePreviewHandle,
+} from "./StickerSourcePreview";
+import { telemetryCollector } from "@/services/telemetryCollector";
+
+const isExternalOrDataUrl = (value: string) =>
+  value.startsWith("data:") ||
+  value.startsWith("http") ||
+  value.startsWith("asset://") ||
+  value.startsWith("blob:");
+
+interface SourcePreviewProps {
+  /** Dual-player keeps Program mounted beside Source; Program owns the default context there. */
+  claimTransportOnMount?: boolean;
+}
+
+export const SourcePreview: React.FC<SourcePreviewProps> = ({
+  claimTransportOnMount = true,
+}) => {
+  const {
+    sourceAsset,
+    sourceTextPreset,
+    sourceInPoint,
+    sourceOutPoint,
+    markSourceIn,
+    markSourceOut,
+  } = useUIStore();
+  const { exitSourceMode } = usePreviewMode();
+  const {
+    tracks,
+    clips,
+    addClip,
+    addTrack,
+    insertTrackAt,
+    getTimelineEndTime,
+  } = useTimelineStore();
+  const { project, updateProject, addMediaAsset } = useProjectStore();
+  const frameRate = project?.frameRate ?? 30;
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const lottiePlayerRef = useRef<StickerSourcePreviewHandle>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [sourceVideoError, setSourceVideoError] = useState(false);
+  const sourceCtxRef = useRef<SourcePlaybackContext | null>(null);
+
+  const isImage = Boolean(
+    sourceAsset &&
+    (sourceAsset.type === "image" ||
+      /\.(jpg|jpeg|png|gif|webp|bmp|svg|tiff|heic|heif|avif)$/i.test(
+        sourceAsset.name || sourceAsset.path || "",
+      )),
+  );
+  const isLottie = Boolean(
+    isImage &&
+    sourceAsset &&
+    (sourceAsset.stickerFormat === "lottie" ||
+      sourceAsset.path?.endsWith(".json")),
+  );
+  const isStillImage = isImage && !isLottie;
+
+  const rawExt =
+    (sourceAsset?.path || "")
+      .split("?")[0]
+      .split("#")[0]
+      .split(".")
+      .pop()
+      ?.toLowerCase() || "";
+  const needsRemux = [
+    "mkv",
+    "avi",
+    "flv",
+    "wmv",
+    "ts",
+    "mts",
+    "m2ts",
+    "vob",
+    "3gp",
+    "ogv",
+  ].includes(rawExt);
+
+  const [lottieData, setLottieData] = useState<object | null>(null);
+  const [lottieError, setLottieError] = useState<string | null>(null);
+
+  // Get source context from active session and bind media element
+  useEffect(() => {
+    const session = getActiveSessionOrNull();
+    // Source Preview owns a separate transport/media space from Program
+    // Preview. Claim the source context before binding any HTML media element.
+    if (claimTransportOnMount) {
+      session?.transportAuthority?.setActiveContext("source");
+    }
+
+    if (sourceAsset?.type === "text" || isStillImage) return;
+
+    const ctx = session?.sourceContext;
+    if (!ctx) return;
+
+    sourceCtxRef.current = ctx;
+
+    // Bind appropriate media element
+    if (sourceAsset?.type === "audio" && audioRef.current) {
+      ctx.setMediaElement(audioRef.current);
+    } else if (sourceAsset?.type === "video" && videoRef.current) {
+      ctx.setMediaElement(videoRef.current);
+    } else {
+      ctx.setMediaElement(null);
+    }
+
+    // Subscribe to context state
+    const unsub = ctx.subscribe((snapshot) => {
+      setCurrentTime(snapshot.time);
+      setDuration(snapshot.duration);
+      setIsPlaying(snapshot.state === "playing");
+    });
+
+    return () => {
+      unsub();
+      ctx.setMediaElement(null);
+      sourceCtxRef.current = null;
+    };
+  }, [claimTransportOnMount, sourceAsset?.id, sourceAsset?.type, isStillImage]);
+
+  useEffect(() => {
+    setSourceVideoError(false);
+    const assetDuration = sourceAsset?.duration;
+    setDuration(
+      typeof assetDuration === "number" &&
+        Number.isFinite(assetDuration) &&
+        assetDuration > 0
+        ? assetDuration
+        : 0,
+    );
+
+    if (!isImage && sourceAsset?.type === "video" && sourceAsset.path) {
+      if (
+        needsRemux &&
+        !(sourceAsset as any).previewPath &&
+        platform.getOrCreatePreviewVideo
+      ) {
+        // Silently background-optimize without blocking the video element.
+        // The video element always renders immediately against the original path (or any
+        // already-cached previewPath). If the browser can't play the format, onError or
+        // videoWidth=0 detection will trigger a forced re-transcode via triggerVideoRecovery.
+        platform
+          .getOrCreatePreviewVideo(sourceAsset.path)
+          .then((previewPath) => {
+            if (previewPath && previewPath !== sourceAsset.path) {
+              useProjectStore
+                .getState()
+                .updateMediaAsset(sourceAsset.id, { previewPath });
+              const cur = useUIStore.getState().sourceAsset;
+              if (cur && cur.id === sourceAsset.id) {
+                useUIStore.setState({
+                  sourceAsset: { ...cur, previewPath } as any,
+                });
+              }
+              setSourceVideoError(false);
+            }
+          })
+          .catch((err) => {
+            console.warn(
+              "[SourcePreview] Background video optimization failed:",
+              err,
+            );
+          });
+      }
+    }
+  }, [
+    sourceAsset?.id,
+    sourceAsset?.type,
+    sourceAsset?.path,
+    (sourceAsset as any)?.previewPath,
+    needsRemux,
+    isImage,
+  ]);
+
+  // Virtual clock for text preview
+  useEffect(() => {
+    if (sourceAsset?.type !== "text") return;
+
+    setDuration(3.0);
+    setCurrentTime(0);
+    setIsPlaying(false);
+  }, [sourceAsset?.id, sourceAsset?.type]);
+
+  useEffect(() => {
+    if (sourceAsset?.type !== "text") return;
+    if (!isPlaying) return;
+
+    const timer = setInterval(() => {
+      setCurrentTime((prev) => {
+        if (prev >= 3.0) {
+          setIsPlaying(false);
+          return 3.0;
+        }
+        const next = prev + 0.016; // ~16ms steps
+        if (next >= 3.0) {
+          setIsPlaying(false);
+          return 3.0;
+        }
+        return next;
+      });
+    }, 16);
+
+    return () => clearInterval(timer);
+  }, [isPlaying, sourceAsset?.type]);
+
+  // Load Lottie JSON from cache on demand
+  useEffect(() => {
+    const isLottie =
+      sourceAsset &&
+      sourceAsset.type === "image" &&
+      (sourceAsset.stickerFormat === "lottie" ||
+        sourceAsset.path?.endsWith(".json"));
+    const lottiePath = sourceAsset?.stickerAnimationPath || sourceAsset?.path;
+    if (!isLottie || !lottiePath) {
+      setLottieData(null);
+      setLottieError(null);
+      return;
+    }
+
+    let active = true;
+    setLottieError(null);
+
+    import("@/features/stickers/cache/stickerCache")
+      .then(({ stickerCacheManager }) => {
+        return stickerCacheManager.readLottieJson(lottiePath);
+      })
+      .then((data) => {
+        if (active) {
+          setLottieData(data);
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          console.error("[SourcePreview] Failed to load Lottie JSON:", err);
+          setLottieError("Failed to load Lottie preview");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    sourceAsset?.id,
+    sourceAsset?.path,
+    sourceAsset?.stickerAnimationPath,
+    sourceAsset?.stickerFormat,
+  ]);
+
+  // Compute Lottie animation duration
+  const lottieDuration = useMemo(() => {
+    if (!lottieData) return 0;
+    const { op, ip, fr } = lottieData as any;
+    if (typeof op === "number" && typeof fr === "number" && fr > 0) {
+      return (op - (ip || 0)) / fr;
+    }
+    return 3.0;
+  }, [lottieData]);
+
+  // Reset when asset changes
+  useEffect(() => {
+    const isLottie =
+      sourceAsset &&
+      sourceAsset.type === "image" &&
+      (sourceAsset.stickerFormat === "lottie" ||
+        sourceAsset.path?.endsWith(".json"));
+    if (isLottie) {
+      setDuration(lottieDuration);
+      setCurrentTime(0);
+      setIsPlaying(true);
+    }
+  }, [sourceAsset?.id, lottieDuration, sourceAsset?.stickerFormat]);
+
+  // Set duration when Lottie duration changes
+  useEffect(() => {
+    const isLottie =
+      sourceAsset &&
+      sourceAsset.type === "image" &&
+      (sourceAsset.stickerFormat === "lottie" ||
+        sourceAsset.path?.endsWith(".json"));
+    if (isLottie) {
+      setDuration(lottieDuration);
+    }
+  }, [lottieDuration, sourceAsset?.path, sourceAsset?.stickerFormat]);
+
+  // SP-3 fix: Keep Lottie play state in sync with isPlaying without running a conflicting
+  // setInterval loop that calls goToFrame() on every tick during active playback.
+  useEffect(() => {
+    if (!lottiePlayerRef.current) return;
+    if (isPlaying) {
+      lottiePlayerRef.current.play();
+    } else {
+      lottiePlayerRef.current.pause();
+    }
+  }, [isPlaying]);
+
+  const handleSeek = useCallback(
+    (time: number) => {
+      getActiveSessionOrNull()?.transportAuthority?.setActiveContext("source");
+      if (sourceAsset?.type === "text") {
+        setCurrentTime(Math.max(0, Math.min(time, 3.0)));
+        return;
+      }
+      const isLottie =
+        sourceAsset &&
+        sourceAsset.type === "image" &&
+        (sourceAsset.stickerFormat === "lottie" ||
+          sourceAsset.path?.endsWith(".json"));
+      if (isLottie) {
+        const targetTime = Math.max(0, Math.min(time, duration));
+        setCurrentTime(targetTime);
+        if (lottiePlayerRef.current && lottieData) {
+          const { fr } = lottieData as any;
+          const frameRate = fr || 30;
+          lottiePlayerRef.current.goToFrame(targetTime * frameRate);
+        }
+        return;
+      }
+      sourceCtxRef.current?.seek(time);
+    },
+    [
+      sourceAsset?.type,
+      sourceAsset?.path,
+      sourceAsset?.stickerFormat,
+      duration,
+      lottieData,
+    ],
+  );
+
+  const handlePlayPause = useCallback(() => {
+    const session = getActiveSessionOrNull();
+    session?.transportAuthority?.setActiveContext("source");
+
+    if (sourceAsset?.type === "text") {
+      setIsPlaying((prev) => {
+        const next = !prev;
+        if (next && currentTime >= 3.0) {
+          setCurrentTime(0);
+        }
+        return next;
+      });
+      return;
+    }
+    const isLottie =
+      sourceAsset &&
+      sourceAsset.type === "image" &&
+      (sourceAsset.stickerFormat === "lottie" ||
+        sourceAsset.path?.endsWith(".json"));
+    if (isLottie) {
+      setIsPlaying((prev) => {
+        const next = !prev;
+        if (next && currentTime >= duration) {
+          setCurrentTime(0);
+          if (lottiePlayerRef.current) {
+            lottiePlayerRef.current.goToFrame(0);
+          }
+        }
+        return next;
+      });
+      return;
+    }
+    const ctx = sourceCtxRef.current;
+    if (!ctx) return;
+    const state = ctx.getState();
+    if (state === "playing") {
+      ctx.pause();
+    } else {
+      ctx.play();
+    }
+  }, [
+    sourceAsset?.type,
+    sourceAsset?.path,
+    sourceAsset?.stickerFormat,
+    currentTime,
+    duration,
+  ]);
+
+  const handlePlayMarkedRegion = useCallback(() => {
+    getActiveSessionOrNull()?.transportAuthority?.setActiveContext("source");
+    sourceCtxRef.current?.playMarkedRegion();
+  }, []);
+
+  const handleClearMarks = useCallback(() => {
+    markSourceIn(null);
+    markSourceOut(null);
+    sourceCtxRef.current?.clearMarks();
+  }, [markSourceIn, markSourceOut]);
+
+  // SP-4 fix: Fallback to local currentTime when sourceCtxRef is not bound (e.g. for procedural text or stickers)
+  const handleMarkIn = useCallback(() => {
+    const t = sourceCtxRef.current
+      ? sourceCtxRef.current.getTime()
+      : currentTime;
+    markSourceIn(t);
+    sourceCtxRef.current?.setInPoint(t);
+  }, [markSourceIn, currentTime]);
+
+  const handleMarkOut = useCallback(() => {
+    const t = sourceCtxRef.current
+      ? sourceCtxRef.current.getTime()
+      : currentTime;
+    markSourceOut(t);
+    sourceCtxRef.current?.setOutPoint(t);
+  }, [markSourceOut, currentTime]);
+
+  if (!sourceAsset) return null;
+
+  const handleAddToTimeline = async () => {
+    if (!project || !sourceAsset) return;
+
+    if (sourceAsset.type === "text" && sourceTextPreset) {
+      await TimelinePlacementEngine.addToTimeline({
+        item: sourceTextPreset,
+        type: "text",
+        sourceInPoint: sourceInPoint ?? undefined,
+        sourceOutPoint: sourceOutPoint ?? undefined,
+      });
+      exitSourceMode();
+      return;
+    }
+
+    let mediaAsset = sourceAsset as MediaAsset;
+    if (isImage && mediaAsset.type !== "image") {
+      mediaAsset = { ...mediaAsset, type: "image" };
+      useProjectStore
+        .getState()
+        .updateMediaAsset(mediaAsset.id, { type: "image" });
+    }
+
+    if (
+      !mediaAsset.id.startsWith("audio-library-") &&
+      !mediaAsset.id.startsWith("sticker-")
+    ) {
+      addMediaAsset(mediaAsset);
+    }
+
+    await TimelinePlacementEngine.addToTimeline({
+      item: mediaAsset,
+      type: "media",
+      sourceInPoint: sourceInPoint ?? undefined,
+      sourceOutPoint: sourceOutPoint ?? undefined,
+    });
+    exitSourceMode();
+  };
+
+  /** Format time as HH:MM:SS (no frames) */
+  const formatTC = (seconds: number): string => {
+    return formatTime(seconds);
+  };
+
+  // Calculate marked duration
+  const markedDuration =
+    !isStillImage && sourceInPoint !== null && sourceOutPoint !== null
+      ? sourceOutPoint - sourceInPoint
+      : null;
+  const hasMarks =
+    !isStillImage && (sourceInPoint !== null || sourceOutPoint !== null);
+  const hasCompleteMarks =
+    !isStillImage && sourceInPoint !== null && sourceOutPoint !== null;
+
+  const effectiveSourcePath =
+    (sourceAsset as any)?.previewPath ||
+    sourceAsset?.path ||
+    (sourceAsset as any)?.posterFrame;
+  const sourcePath = effectiveSourcePath
+    ? isExternalOrDataUrl(effectiveSourcePath)
+      ? effectiveSourcePath
+      : platform.convertFileSrc(effectiveSourcePath)
+    : "";
+  const mediaLabel = isImage
+    ? "image"
+    : sourceAsset.type === "video"
+      ? "video"
+      : sourceAsset.type === "audio"
+        ? "audio"
+        : sourceAsset.type === "text"
+          ? "text"
+          : "image";
+
+  const recoveryAttemptedRef = useRef<Record<string, boolean>>({});
+
+  const triggerVideoRecovery = useCallback(
+    (reason: string, forceTranscode = false) => {
+      if (
+        isImage ||
+        sourceAsset?.type !== "video" ||
+        !sourceAsset.path ||
+        !platform.getOrCreatePreviewVideo
+      ) {
+        return;
+      }
+
+      const assetKey = `${sourceAsset.id}:${forceTranscode ? "force" : "normal"}`;
+      if (recoveryAttemptedRef.current[assetKey]) {
+        return;
+      }
+      recoveryAttemptedRef.current[assetKey] = true;
+
+      // Silently create a compatible proxy in the background — never block the video element.
+      // The <video> stays visible; its src switches to the proxy as soon as FFmpeg finishes.
+      telemetryCollector.recordSourcePreviewDiagnostic({
+        status: "recovery_start",
+        assetId: sourceAsset.id,
+        assetName: sourceAsset.name,
+        assetPath: sourceAsset.path,
+        mediaType: "video",
+        srcUrl: sourcePath,
+        errorMessage: reason,
+      });
+
+      platform
+        .getOrCreatePreviewVideo(sourceAsset.path, forceTranscode)
+        .then((previewPath) => {
+          if (previewPath && previewPath !== sourceAsset.path) {
+            useProjectStore
+              .getState()
+              .updateMediaAsset(sourceAsset.id, { previewPath });
+            const cur = useUIStore.getState().sourceAsset;
+            if (cur && cur.id === sourceAsset.id) {
+              useUIStore.setState({
+                sourceAsset: { ...cur, previewPath } as any,
+              });
+            }
+            setSourceVideoError(false);
+            telemetryCollector.recordSourcePreviewDiagnostic({
+              status: "recovery_success",
+              assetId: sourceAsset.id,
+              assetName: sourceAsset.name,
+              assetPath: sourceAsset.path,
+              mediaType: "video",
+              srcUrl: previewPath,
+              hasPreviewProxy: true,
+            });
+          } else {
+            setSourceVideoError(true);
+            telemetryCollector.recordSourcePreviewDiagnostic({
+              status: "recovery_failed",
+              assetId: sourceAsset.id,
+              assetName: sourceAsset.name,
+              assetPath: sourceAsset.path,
+              mediaType: "video",
+              srcUrl: sourcePath,
+              errorMessage:
+                previewPath === sourceAsset.path
+                  ? "Transcoder returned original unplayable path"
+                  : "Transcoder returned empty preview path",
+            });
+          }
+        })
+        .catch((err) => {
+          console.error("[SourcePreview] Recovery optimization failed:", err);
+          setSourceVideoError(true);
+          telemetryCollector.recordSourcePreviewDiagnostic({
+            status: "recovery_failed",
+            assetId: sourceAsset.id,
+            assetName: sourceAsset.name,
+            assetPath: sourceAsset.path,
+            mediaType: "video",
+            srcUrl: sourcePath,
+            errorMessage: String(err),
+          });
+        });
+    },
+    [isImage, sourceAsset, sourcePath],
+  );
+
+  const handleVideoError = useCallback(
+    (event?: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+      const mediaEl = event?.currentTarget as HTMLVideoElement | undefined;
+      const mediaError = mediaEl?.error;
+      const errorCode = mediaError?.code;
+      const errorMessage = mediaError?.message;
+      const networkState = mediaEl?.networkState;
+      const readyState = mediaEl?.readyState;
+      const currentSrc = mediaEl?.currentSrc || sourcePath;
+
+      telemetryCollector.recordSourcePreviewDiagnostic({
+        status: "error",
+        assetId: sourceAsset?.id,
+        assetName: sourceAsset?.name,
+        assetPath: sourceAsset?.path,
+        mediaType: "video",
+        srcUrl: currentSrc,
+        errorCode,
+        errorMessage,
+        networkState,
+        readyState,
+        duration,
+        hasPreviewProxy: Boolean((sourceAsset as any)?.previewPath),
+      });
+
+      console.warn("[SourcePreview] Video playback error:", {
+        errorCode,
+        errorMessage,
+        networkState,
+        readyState,
+        currentSrc,
+      });
+
+      triggerVideoRecovery(
+        errorMessage || `media_error_code_${errorCode}`,
+        true,
+      );
+    },
+    [sourceAsset, sourcePath, duration, triggerVideoRecovery],
+  );
+
+  return (
+    <div
+      data-preview-space="source"
+      className="flex-1 flex flex-col min-h-0 bg-bg"
+    >
+      {/* ── Header ─────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between px-4 h-10 shrink-0 border-b border-border/50">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[13px] font-semibold text-text-primary tracking-tight">
+            Previewing
+          </span>
+          <span className="text-[13px] text-text-muted">— {mediaLabel}</span>
+        </div>
+        <button
+          onClick={() => {
+            exitSourceMode(); // Auto-switches transport context
+          }}
+          className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/6 transition-colors text-text-muted hover:text-text-primary"
+          title="Close (Esc)"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* ── Mark Info Bar ──────────────────────────────────────────── */}
+      {hasMarks && (
+        <div className="px-4 py-2 bg-surface/50 border-b border-border/30 flex items-center justify-between text-[11px]">
+          <div className="flex items-center gap-4">
+            {sourceInPoint !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">In:</span>
+                <span className="font-mono text-accent">
+                  {formatTC(sourceInPoint)}
+                </span>
+              </div>
+            )}
+            {sourceOutPoint !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">Out:</span>
+                <span className="font-mono text-accent">
+                  {formatTC(sourceOutPoint)}
+                </span>
+              </div>
+            )}
+            {hasCompleteMarks && markedDuration !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">Duration:</span>
+                <span className="font-mono text-text-primary font-semibold">
+                  {markedDuration.toFixed(2)}s
+                </span>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={handleClearMarks}
+            className="flex items-center gap-1 px-2 h-5 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors"
+            title="Clear marks"
+          >
+            <RotateCcw className="w-3 h-3" />
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* ── Video Area ─────────────────────────────────────────────── */}
+      <div className="flex-1 flex items-center justify-center overflow-hidden checkerboard relative">
+        <div className="w-full h-full flex items-center justify-center relative z-10">
+          {isImage ? (
+            isLottie ? (
+              lottieError ? (
+                <div className="text-red-400 text-xs">{lottieError}</div>
+              ) : lottieData ? (
+                <StickerSourcePreview
+                  ref={lottiePlayerRef}
+                  lottieData={lottieData}
+                  isPlaying={isPlaying}
+                  loop={true}
+                  speed={1}
+                  onFrameChange={(frame, total) => {
+                    if (total > 0 && lottieDuration > 0) {
+                      setCurrentTime((frame / total) * lottieDuration);
+                    }
+                  }}
+                  className="max-w-full max-h-full"
+                />
+              ) : (
+                <div className="text-text-muted text-xs flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading preview...
+                </div>
+              )
+            ) : (
+              <ImageSourcePreview src={sourcePath} alt={sourceAsset.name} />
+            )
+          ) : sourceAsset.type === "video" ? (
+            <div className="relative w-full h-full flex items-center justify-center">
+              {sourceVideoError && (sourceAsset as any).posterFrame ? (
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <img
+                    src={(sourceAsset as any).posterFrame}
+                    alt={sourceAsset.name}
+                    className="w-full h-full object-contain"
+                  />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 p-4 text-center pointer-events-none gap-2">
+                    <span className="rounded-lg bg-black/80 px-3 py-1.5 text-xs font-medium text-red-300 border border-red-500/20 shadow-md">
+                      Unable to load source video
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <VideoSourcePreview
+                  videoRef={videoRef}
+                  src={sourcePath}
+                  onLoadedMetadata={(event) => {
+                    const el = event.currentTarget;
+                    const mediaDuration = Number(el.duration);
+                    if (Number.isFinite(mediaDuration) && mediaDuration > 0) {
+                      setDuration(mediaDuration);
+                    }
+                    const vWidth = el.videoWidth;
+                    const vHeight = el.videoHeight;
+                    telemetryCollector.recordSourcePreviewDiagnostic({
+                      status: "ready",
+                      assetId: sourceAsset?.id,
+                      assetName: sourceAsset?.name,
+                      assetPath: sourceAsset?.path,
+                      mediaType: "video",
+                      srcUrl: el.currentSrc || sourcePath,
+                      duration: mediaDuration,
+                      width: vWidth,
+                      height: vHeight,
+                      hasPreviewProxy: Boolean(
+                        (sourceAsset as any)?.previewPath,
+                      ),
+                    });
+
+                    // Proactive detection: Video asset loaded but reports videoWidth === 0 (audio plays, blank screen)
+                    if (sourceAsset?.type === "video" && vWidth === 0) {
+                      console.warn(
+                        "[SourcePreview] Video metadata reported 0 width (unsupported video codec in browser). Triggering transcode recovery.",
+                      );
+                      telemetryCollector.recordSourcePreviewDiagnostic({
+                        status: "blank_video_detected",
+                        assetId: sourceAsset?.id,
+                        assetName: sourceAsset?.name,
+                        assetPath: sourceAsset?.path,
+                        mediaType: "video",
+                        srcUrl: el.currentSrc || sourcePath,
+                        width: 0,
+                        height: 0,
+                        hasPreviewProxy: Boolean(
+                          (sourceAsset as any)?.previewPath,
+                        ),
+                      });
+                      triggerVideoRecovery("video_width_zero_on_load", true);
+                    }
+                  }}
+                  onTimeUpdate={(event) => {
+                    const el = event.currentTarget;
+                    if (
+                      sourceAsset?.type === "video" &&
+                      el.currentTime > 0.5 &&
+                      el.videoWidth === 0
+                    ) {
+                      console.warn(
+                        "[SourcePreview] Video playing with 0 width. Triggering transcode recovery.",
+                      );
+                      telemetryCollector.recordSourcePreviewDiagnostic({
+                        status: "blank_video_detected",
+                        assetId: sourceAsset?.id,
+                        assetName: sourceAsset?.name,
+                        assetPath: sourceAsset?.path,
+                        mediaType: "video",
+                        srcUrl: el.currentSrc || sourcePath,
+                        width: 0,
+                        height: 0,
+                        hasPreviewProxy: Boolean(
+                          (sourceAsset as any)?.previewPath,
+                        ),
+                      });
+                      triggerVideoRecovery(
+                        "video_width_zero_during_playback",
+                        true,
+                      );
+                    }
+                  }}
+                  onError={handleVideoError}
+                />
+              )}
+            </div>
+          ) : sourceAsset.type === "text" ? (
+            <TextSourcePreview preset={sourceTextPreset} />
+          ) : (
+            <AudioSourcePreview
+              audioRef={audioRef}
+              src={sourcePath}
+              isPlaying={isPlaying}
+              coverImage={sourceAsset.coverArt}
+              audioName={sourceAsset.name}
+            />
+          )}
+        </div>
+      </div>
+
+      {sourceAsset.type === "text" || isStillImage ? (
+        <div className="flex items-center justify-between h-10 px-4 shrink-0 border-t border-border/30 bg-surface/30">
+          <span className="text-[11px] text-text-muted font-medium select-none">
+            {sourceAsset.type === "text"
+              ? "Procedural Style Preview"
+              : "Still Image"}
+          </span>
+          <button
+            onClick={handleAddToTimeline}
+            className="flex items-center gap-1.5 px-3 h-7 rounded text-[11px] font-semibold bg-accent hover:bg-accent-soft active:scale-95 text-white cursor-pointer transition-all duration-150 shadow-sm"
+            title={
+              sourceAsset.type === "text"
+                ? "Add text to timeline"
+                : "Add to Timeline"
+            }
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add to Timeline
+          </button>
+        </div>
+      ) : (
+        <PreviewTransport
+          currentTime={currentTime}
+          duration={duration}
+          isPlaying={isPlaying}
+          frameRate={frameRate}
+          onPlayPause={handlePlayPause}
+          onSeek={handleSeek}
+          formatTime={formatTC}
+          inPoint={sourceInPoint}
+          outPoint={sourceOutPoint}
+          rightActions={
+            <>
+              <button
+                onClick={handleMarkIn}
+                className={`px-1.5 @[320px]:px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceInPoint !== null && Math.abs(currentTime - sourceInPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`}
+                title="Mark In (I)"
+              >
+                IN
+              </button>
+              <button
+                onClick={handleMarkOut}
+                className={`px-1.5 @[320px]:px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceOutPoint !== null && Math.abs(currentTime - sourceOutPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`}
+                title="Mark Out (O)"
+              >
+                OUT
+              </button>
+              {hasCompleteMarks && (
+                <button
+                  onClick={handlePlayMarkedRegion}
+                  className="hidden @[380px]:flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors cursor-pointer"
+                  title="Play marked region"
+                >
+                  <Play className="w-3 h-3" />
+                  Play
+                </button>
+              )}
+              <div className="hidden @[320px]:block w-px h-4 bg-white/10 mx-0.5" />
+              {(() => {
+                // SP-2 fix: Allow adding any valid source asset to the timeline.
+                // If In/Out marks are set, it adds the marked slice; if not, it adds the full duration.
+                const isAddEnabled = Boolean(sourceAsset);
+                return (
+                  <button
+                    onClick={handleAddToTimeline}
+                    disabled={!isAddEnabled}
+                    className={`flex items-center gap-1 px-2 @[320px]:px-2.5 h-6 rounded text-[10px] font-semibold transition-all shrink-0 ${
+                      isAddEnabled
+                        ? "bg-accent hover:bg-accent-soft text-white cursor-pointer"
+                        : "bg-text-muted/70 hover:bg-text-muted/90 text-white cursor-not-allowed"
+                    }`}
+                    title={
+                      hasCompleteMarks && markedDuration !== null
+                        ? `Add ${markedDuration.toFixed(2)}s to Timeline`
+                        : "Add to Timeline"
+                    }
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span className="hidden @[280px]:inline">Add</span>
+                  </button>
+                );
+              })()}
+            </>
+          }
+        />
+      )}
+    </div>
+  );
+};

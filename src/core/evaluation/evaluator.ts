@@ -1,0 +1,1236 @@
+/**
+ * Canonical Timeline Scene Evaluator
+ *
+ * This is the SINGLE SOURCE OF TRUTH for NLE timeline evaluation.
+ * All rendering paths use this:
+ * - Preview
+ * - Export
+ * - Thumbnails
+ * - Proxies
+ *
+ * NOTE: The function is named evaluateTimelineScene (not evaluateScene) to
+ * avoid collision with @clypra-studio/engine's evaluateScene, which takes a
+ * SceneDocument and draws directly to a Canvas 2D context. These two
+ * functions operate at different layers:
+ *
+ *   evaluateTimelineScene  → reads Clips/Tracks/Assets → produces EvaluatedScene
+ *   engine.evaluateScene   → reads SceneDocument       → draws pixels
+ */
+
+import type {
+  Clip,
+  Track,
+  MediaAsset,
+  Project,
+  TextClip,
+  TransitionTimelineItem,
+} from "@/types";
+import type {
+  EvaluatedScene,
+  EvaluatedVisualLayer,
+  EvaluatedMediaLayer,
+  EvaluatedTextLayer,
+  EvaluatedAudioLayer,
+  EvaluatedTransition,
+  SceneMetadata,
+  BlendMode,
+} from "./types";
+import { toCompositorClips } from "../timeline/adapter";
+import { getClipEndTime } from "@/lib/timeline/timelineClip";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import {
+  resolveConform,
+  resolveTextTemplateArtifact,
+} from "@clypra-studio/engine";
+import { resolveCanonicalFamily } from "@/core/fonts/fontRegistry";
+import { traceCutoutEvent } from "@/core/playback/cutoutPipelineTrace";
+
+const isExternalOrDataUrl = (value: string) =>
+  value.startsWith("data:") ||
+  value.startsWith("http") ||
+  value.startsWith("asset://");
+import {
+  getEvaluationCache,
+  computeClipVersion,
+  computeAssetsVersion,
+  computeCanvasBackgroundVersion,
+  computeEffectsStoreVersion,
+} from "./cache";
+import { evaluateProperty, evaluateVisualPropertyKeyframes } from "./animation";
+import { applyLoopMotion, evaluateSpatialPosition } from "@/core/animation";
+import { workerPerfCollector } from "@/core/monitoring/WorkerPerfCollector";
+import { resolveClipSourceTime } from "../timeline/sourceTime";
+import { calculateTextAnimationState } from "@/lib/text/textAnimation";
+import { normalizeFilterIntensity } from "../render/filterIR";
+import {
+  resolveTextEffectDefinition,
+  resolveTextEffectTypography,
+} from "@/lib/text/textClip";
+import { evaluateEffectiveAudioState } from "@/core/audio/effectiveAudioState";
+import { useEffectsStore } from "@/features/text-effects/store/effectsStore";
+import { expandCompoundClips } from "@/core/timeline/compoundClips";
+import { compareCompositorClips } from "@/core/compositor/ordering";
+
+/**
+ * Evaluate the NLE timeline at a specific time.
+ * Returns a complete EvaluatedScene ready for rasterization.
+ *
+ * @param time    - Timeline time in seconds
+ * @param clips   - All clips in timeline
+ * @param tracks  - All tracks
+ * @param assets  - All media assets
+ * @param project - Project settings
+ */
+export function evaluateTimelineScene(
+  time: number,
+  clips: Clip[],
+  tracks: Track[],
+  assets: MediaAsset[],
+  project: Project | null,
+  transitions: TransitionTimelineItem[] = [],
+): EvaluatedScene {
+  const evalStartMs = performance.now();
+  let keyframeEvaluationsCount = 0;
+  let spatialEvaluationsCount = 0;
+  let springEvaluationsCount = 0;
+  let responsiveRetimesCount = 0;
+
+  clips = expandCompoundClips(clips);
+  // Convert to compositor clips (adds roles, priorities)
+  const compositorClips = toCompositorClips(clips, tracks);
+
+  // Build lookup maps for performance
+  const trackMap = new Map(tracks.map((track) => [track.id, track]));
+  const assetMap = new Map(assets.map((asset) => [asset.id, asset]));
+
+  // Determine the max end time of all clips to identify the end of the active timeline
+  const maxEndTime = compositorClips.reduce((max, clip) => {
+    const clipEnd = clip.startTime + clip.duration;
+    return Math.max(max, clipEnd);
+  }, 0);
+
+  // If time is exactly at or slightly past the end of the active timeline (and not in a gap),
+  // clamp it slightly back (e.g., by 0.001s) so that the final frame remains active and rendered.
+  let evalTime = time;
+  if (
+    maxEndTime > 0 &&
+    evalTime >= maxEndTime &&
+    evalTime < maxEndTime + 0.001
+  ) {
+    evalTime = Math.max(0, maxEndTime - 0.001);
+  }
+
+  // ─── 1. Active Clip Resolution (Contract §1) ─────────────────────────────
+
+  const transitionWindows = resolveActiveTransitionWindows(
+    transitions,
+    compositorClips,
+    evalTime,
+  );
+
+  const frameRate = project?.frameRate || 30;
+  const frameDuration = 1 / frameRate;
+
+  const activeClips = compositorClips.filter((clip) => {
+    const clipEnd = getClipEndTime(clip);
+    // Allow boundary tolerance (1e-4s = 0.1ms) to guard against IEEE-754 precision drift
+    // and sub-millisecond timer variance on frame boundaries.
+    const isInTimeBounds =
+      clip.startTime <= evalTime + 1e-4 && evalTime < clipEnd;
+    const track = trackMap.get(clip.trackId);
+    const isVisible = track?.visible ?? true;
+    const isInTransition = transitionWindows.some(
+      (transition) =>
+        transition.fromClip.id === clip.id || transition.toClip.id === clip.id,
+    );
+    return (isInTimeBounds || isInTransition) && isVisible;
+  });
+
+  // ─── 2. Compositing Order (Contract §2) ───────────────────────────────────
+
+  // Find active timeline filter clip at this time (lowest trackIndex = top in UI)
+  const activeFilterClips = compositorClips
+    .filter((c) => {
+      const track = trackMap.get(c.trackId);
+      return (
+        c.kind === "filter" &&
+        (track?.visible ?? true) &&
+        c.startTime <= evalTime + 1e-4 &&
+        evalTime < c.startTime + c.duration
+      );
+    })
+    .sort((a, b) => a.trackIndex - b.trackIndex);
+  const activeFilterClip = activeFilterClips[0] ?? null;
+
+  const activeEffectClips = compositorClips
+    .filter((c) => {
+      const track = trackMap.get(c.trackId);
+      return (
+        (c.kind === "video-effect" || c.kind === "body-effect") &&
+        (track?.visible ?? true) &&
+        c.startTime <= evalTime + 1e-4 &&
+        evalTime < c.startTime + c.duration
+      );
+    })
+    .sort((a, b) => a.trackIndex - b.trackIndex);
+
+  const sortedClips = activeClips.sort(compareCompositorClips);
+
+  // ─── 3. Evaluate Visual Layers ────────────────────────────────────────────
+
+  const visualLayers: EvaluatedVisualLayer[] = [];
+
+  for (let i = 0; i < sortedClips.length; i++) {
+    const clip = sortedClips[i];
+    const offset = Math.max(0, evalTime - clip.startTime);
+    const vkf = clip.visualKeyframes;
+    const kf = (clip as any).keyframes || {};
+    const hasSpatialCurvature = Boolean(
+      (vkf?.x?.length || 0) > 1 &&
+      (vkf?.x?.some((k) => k.spatialIn || k.spatialOut) ||
+       vkf?.y?.some((k) => (k as any).spatialIn || (k as any).spatialOut))
+    );
+
+    if (vkf) {
+      if (vkf.x?.length) {
+        keyframeEvaluationsCount++;
+        if (vkf.x.some((k) => k.spring)) springEvaluationsCount++;
+        if (vkf.x.some((k) => k.anchor)) responsiveRetimesCount++;
+      }
+      if (vkf.y?.length) {
+        keyframeEvaluationsCount++;
+        if (vkf.y.some((k) => k.spring)) springEvaluationsCount++;
+        if (vkf.y.some((k) => k.anchor)) responsiveRetimesCount++;
+      }
+      if (vkf.width?.length) keyframeEvaluationsCount++;
+      if (vkf.height?.length) keyframeEvaluationsCount++;
+      if (vkf.rotation?.length) keyframeEvaluationsCount++;
+      if (vkf.opacity?.length) keyframeEvaluationsCount++;
+    }
+    if (hasSpatialCurvature) {
+      spatialEvaluationsCount++;
+    }
+
+    let evalX: number;
+    let evalY: number;
+
+    if (hasSpatialCurvature) {
+      const spatialPos = evaluateSpatialPosition(clip as any, offset);
+      evalX = spatialPos.x;
+      evalY = spatialPos.y;
+    } else {
+      evalX =
+        vkf?.x?.length
+          ? evaluateVisualPropertyKeyframes(vkf.x, offset, clip.x, clip.duration)
+          : kf.x !== undefined
+            ? evaluateProperty(kf.x, offset, clip.duration)
+            : clip.x;
+      evalY =
+        vkf?.y?.length
+          ? evaluateVisualPropertyKeyframes(vkf.y, offset, clip.y, clip.duration)
+          : kf.y !== undefined
+            ? evaluateProperty(kf.y, offset, clip.duration)
+            : clip.y;
+    }
+    let evalW =
+      vkf?.width?.length
+        ? evaluateVisualPropertyKeyframes(vkf.width, offset, clip.width, clip.duration)
+        : kf.width !== undefined
+          ? evaluateProperty(kf.width, offset, clip.duration)
+          : clip.width;
+    let evalH =
+      vkf?.height?.length
+        ? evaluateVisualPropertyKeyframes(vkf.height, offset, clip.height, clip.duration)
+        : kf.height !== undefined
+          ? evaluateProperty(kf.height, offset, clip.duration)
+          : clip.height;
+
+    if (clip.conform && clip.conform.sourceWidth && clip.conform.sourceHeight) {
+      const conformed = resolveConform(
+        clip.conform,
+        project?.canvasWidth ?? 1920,
+        project?.canvasHeight ?? 1080,
+      );
+      evalX = (vkf?.x?.length || kf.x !== undefined) ? evalX : conformed.x;
+      evalY = (vkf?.y?.length || kf.y !== undefined) ? evalY : conformed.y;
+      evalW = (vkf?.width?.length || kf.width !== undefined) ? evalW : conformed.width;
+      evalH = (vkf?.height?.length || kf.height !== undefined) ? evalH : conformed.height;
+    }
+
+    let evalRot =
+      vkf?.rotation?.length
+        ? evaluateVisualPropertyKeyframes(vkf.rotation, offset, clip.rotation, clip.duration)
+        : kf.rotation !== undefined
+          ? evaluateProperty(kf.rotation, offset, clip.duration)
+          : clip.rotation;
+    let evalOpacity =
+      vkf?.opacity?.length
+        ? evaluateVisualPropertyKeyframes(vkf.opacity, offset, clip.opacity, clip.duration)
+        : kf.opacity !== undefined
+          ? evaluateProperty(kf.opacity, offset, clip.duration)
+          : clip.opacity;
+
+    // Apply continuous loop emphasis motion (Float, Pulse, Wiggle, etc.)
+    if (clip.motion?.loopPreset && clip.motion.loopPreset !== "none") {
+      const modulated = applyLoopMotion(
+        clip.motion.loopPreset,
+        offset,
+        {
+          x: evalX,
+          y: evalY,
+          width: evalW,
+          height: evalH,
+          rotation: evalRot,
+          opacity: evalOpacity,
+        },
+        clip.motion.loopSpeed,
+        clip.motion.loopIntensity,
+      );
+      evalX = modulated.x;
+      evalY = modulated.y;
+      evalW = modulated.width;
+      evalH = modulated.height;
+      evalRot = modulated.rotation;
+      evalOpacity = modulated.opacity;
+    }
+
+    const isTextClip = clip.kind === "text" || clip.kind === "text-template";
+
+    if (isTextClip) {
+      const textClip = clip as unknown as TextClip;
+      const templateArtifact =
+        clip.kind === "text-template"
+          ? resolveTextTemplateArtifact((clip as any).templateSnapshot)
+          : null;
+      const templateTextNode = templateArtifact?.document.nodes.find(
+        (node: any) => node.type === "text",
+      ) as any;
+
+      // Compute once here — never re-parsed per render frame.
+      // Stored on EvaluatedTextLayer so buildNativeTextKeyObject can read
+      // layer.templateAnimated instead of re-parsing the artifact document
+      // on every call (which was the per-frame O(n-nodes) hotspot).
+      const templateAnimated = Boolean(
+        templateArtifact?.document.nodes.some((node: any) => {
+          const a = node.animation;
+          return (
+            a &&
+            ((a.in && a.in !== "none") ||
+              (a.out && a.out !== "none") ||
+              Boolean(a.propertyKeyframes) ||
+              Boolean(node.splitAnimator))
+          );
+        }),
+      );
+      const transitionState = evaluateTransitionState(clip, transitionWindows);
+
+      const catalogStyleDefinition = resolveTextEffectDefinition(
+        textClip.styleId,
+        textClip.styleDefinition,
+        textClip.styleRevisionId,
+        textClip.styleContentHash,
+      );
+
+      // make intent explicit
+      const styleDefinition =
+        catalogStyleDefinition != null || textClip.styleSnapshot != null
+          ? ({
+              ...(catalogStyleDefinition ?? {}),
+              id: textClip.styleId,
+              scene:
+                textClip.styleSnapshot ??
+                (catalogStyleDefinition as any)?.scene,
+            } as any)
+          : undefined;
+
+      const styleTypography = resolveTextEffectTypography(styleDefinition);
+      const templateStyle = templateTextNode?.style || {};
+
+      const evalFontSize =
+        kf.fontSize !== undefined
+          ? evaluateProperty(kf.fontSize, offset, clip.duration)
+          : (textClip.fontSize ??
+            templateStyle.fontSize ??
+            styleTypography.fontSize ??
+            48);
+      const evalColor =
+        kf.color !== undefined
+          ? evaluateProperty(kf.color, offset, clip.duration)
+          : textClip.color || templateStyle.textColor || "#ffffff";
+      const evalLetterSpacing =
+        kf.letterSpacing !== undefined
+          ? evaluateProperty(kf.letterSpacing, offset, clip.duration)
+          : (textClip.letterSpacing ??
+            templateStyle.letterSpacing ??
+            styleTypography.letterSpacing ??
+            0);
+      const evalLineHeight =
+        kf.lineHeight !== undefined
+          ? evaluateProperty(kf.lineHeight, offset, clip.duration)
+          : (textClip.lineHeight ??
+            templateStyle.lineHeight ??
+            styleTypography.lineHeight ??
+            1.2);
+
+      // ── Calculate Text Animations ──────────────────────────────────────────
+      const animationState = calculateTextAnimationState(
+        evalTime,
+        clip.startTime,
+        clip.duration,
+        textClip.entranceAnimation,
+        textClip.exitAnimation,
+        frameDuration,
+      );
+
+      // Apply animation opacity (multiply with transition opacity)
+      const finalOpacity =
+        evalOpacity * (transitionState.opacity ?? 1.0) * animationState.opacity;
+
+      // Apply animation transforms to position
+      const finalX = evalX + animationState.translateX;
+      const finalY = evalY + animationState.translateY;
+
+      // Apply animation scale to dimensions
+      const finalWidth = evalW * animationState.scale;
+      const finalHeight = evalH * animationState.scale;
+
+      const karaokeTime = Math.max(0, evalTime - clip.startTime);
+      const karaokeRuns = textClip.words?.length
+        ? textClip.words.map((word, wordIndex) => ({
+            text:
+              word.word + (wordIndex < textClip.words!.length - 1 ? " " : ""),
+            highlighted: karaokeTime >= word.start && karaokeTime < word.end,
+          }))
+        : undefined;
+
+      const textLayer: EvaluatedTextLayer = {
+        layerId: clip.id,
+        clipId: clip.id,
+        role: clip.role,
+        clipKind: clip.kind,
+        zIndex: i,
+        trackIndex: clip.trackIndex,
+        layerType: "text",
+        time: evalTime,
+        clipStartTime: clip.startTime,
+        clipDuration: clip.duration,
+        animationOperation:
+          animationState.operation === "render" && Object.keys(kf).length > 0
+            ? "animation"
+            : animationState.operation,
+        animationType: animationState.animationType,
+        textRole: textClip.textRole,
+        maxWidth: textClip.maxWidth,
+        baseWidth: (textClip as any).baseWidth ?? evalW,
+        baseHeight: (textClip as any).baseHeight ?? evalH,
+        x: finalX,
+        y: finalY,
+        width: finalWidth,
+        height: finalHeight,
+        rotation: evalRot,
+        opacity: finalOpacity,
+        inTransition: transitionState.inTransition,
+        transitionType: transitionState.type,
+        transitionProgress: transitionState.progress,
+        blendMode: (clip as any).blendMode || "normal",
+        // An explicitly empty clip is intentionally invisible. "Text" is
+        // only the creation-time default; it must not reappear during
+        // evaluation after the user clears the editor field.
+        text: templateTextNode?.text ?? textClip.text ?? "",
+        fontFamily: normalizeFontFamily(
+          textClip.fontFamily ||
+            templateStyle.fontFamily ||
+            styleTypography.fontFamily ||
+            "Inter Variable",
+        ),
+        // Propagate stable fontId so renderers and missing-font detection
+        // can do O(1) registry lookups without re-normalising the family.
+        fontId: textClip.fontId,
+        fontSize: evalFontSize,
+        color: evalColor,
+        fontWeight: (textClip.fontWeight ??
+          templateStyle.fontWeight ??
+          styleTypography.fontWeight ??
+          "normal") as "normal" | "bold" | number,
+        fontStyle:
+          textClip.fontStyle ||
+          templateStyle.fontStyle ||
+          styleTypography.fontStyle ||
+          "normal",
+        textAlign: textClip.align || templateStyle.textAlign || "center",
+        verticalAlign:
+          templateStyle.verticalAlign || textClip.valign || "middle",
+        lineHeight: evalLineHeight,
+        letterSpacing: evalLetterSpacing,
+        ...(karaokeRuns ? { runs: karaokeRuns } : {}),
+        stroke: textClip.stroke,
+        shadow: textClip.shadow,
+        background: textClip.background,
+        styleId: textClip.styleId,
+        styleVersion: textClip.styleVersion,
+        styleRevisionId: textClip.styleRevisionId,
+        styleContentHash: textClip.styleContentHash,
+        styleSnapshot: textClip.styleSnapshot,
+        parameterOverrides: textClip.parameterOverrides,
+        styleDefinition,
+        templateId: textClip.templateId,
+        templateRevisionId: textClip.templateRevisionId,
+        templateContentHash: textClip.templateContentHash,
+        templateSnapshot: textClip.templateSnapshot,
+        templateControlValues: textClip.templateControlValues,
+        templateDependencySnapshot: textClip.templateDependencySnapshot,
+        templateDependencies: textClip.templateDependencies,
+        customization: textClip.customization,
+        templateAnimated:
+          clip.kind === "text-template" || textClip.templateId
+            ? Boolean(templateAnimated)
+            : undefined,
+      };
+
+      visualLayers.push(textLayer);
+
+      continue;
+    }
+
+    // ── Media layers ──────────────────────────────────────────────────────────
+    let asset = assetMap.get(clip.mediaId);
+    if (
+      !asset &&
+      (clip.kind === "sticker" || clip.mediaId.startsWith("sticker-"))
+    ) {
+      asset = {
+        id: clip.mediaId,
+        name: clip.name || "Sticker",
+        path: (clip as any).stickerImagePath || clip.stickerAnimationPath || "",
+        type: "image",
+        duration: clip.duration,
+        size: 0,
+        stickerFormat: clip.stickerFormat,
+        stickerAnimationPath: clip.stickerAnimationPath,
+        stickerSourceId: clip.stickerSourceId,
+      };
+    }
+    if (!asset && clip.kind === "image" && clip.mediaUrl) {
+      asset = {
+        id: clip.mediaId,
+        name: clip.name || "Template Image",
+        path: clip.mediaUrl,
+        type: "image",
+        duration: clip.duration,
+        size: 0,
+      };
+    }
+    // Explicit audio clips can retain their source video asset so the audio
+    // router can resolve the embedded/direct audio path. They must never enter
+    // the visual compositor as video layers.
+    if (
+      clip.kind === "audio" ||
+      !asset ||
+      asset.isMissing ||
+      (asset.type !== "video" && asset.type !== "image")
+    )
+      continue;
+
+    const sourceTime = resolveClipSourceTime(clip, evalTime, {
+      clampToRange: true,
+      frameRate: project?.frameRate ?? 30,
+    }).sourceTime;
+    const sourcePath = asset.path
+      ? isExternalOrDataUrl(asset.path)
+        ? asset.path
+        : convertFileSrc(asset.path)
+      : asset.posterFrame || "";
+    if (!sourcePath) continue;
+
+    const transitionState = evaluateTransitionState(clip, transitionWindows);
+
+    const mediaLayer: EvaluatedMediaLayer = {
+      layerId: clip.id,
+      clipId: clip.id,
+      role: clip.role,
+      clipKind: clip.kind,
+      zIndex: i,
+      trackIndex: clip.trackIndex, // ADDED: Include track index for compositor debugging
+      layerType: "media",
+      mediaId: clip.mediaId,
+      mediaType: asset.type === "video" ? "video" : "image",
+      sourcePath,
+      posterFrame: asset.posterFrame,
+      sourceWidth: asset.width,
+      sourceHeight: asset.height,
+      sourceTime,
+      sourceRotation: asset.rotation,
+      conform: (clip as any).conform,
+      adjustments: clip.adjustments,
+      colorGrade: clip.colorGrade,
+      x: evalX,
+      y: evalY,
+      width: evalW,
+      height: evalH,
+      rotation: evalRot,
+      opacity: evalOpacity,
+      transitionOpacity: transitionState.opacity ?? 1.0,
+      inTransition: transitionState.inTransition,
+      transitionType: transitionState.type,
+      transitionProgress: transitionState.progress,
+      blendMode: (clip as any).blendMode || "normal",
+      stickerSettings: (clip as any).stickerSettings,
+      stickerFormat:
+        (clip as any).stickerFormat ?? (asset as any).stickerFormat,
+      stickerAnimationPath:
+        (clip as any).stickerAnimationPath ??
+        (asset as any).stickerAnimationPath,
+      stickerSourceId:
+        (clip as any).stickerSourceId ?? (asset as any).stickerSourceId,
+      effects: [
+        ...(clip.effects || []).map((fx) => ({
+          effectId: fx.effectId || fx.id,
+          type: "video_effect" as const,
+          renderer: fx.renderer || fx.effectId || fx.id,
+          parameters: { ...(fx.params || {}), name: fx.name },
+          intensity: normalizeEffectIntensity(fx.intensity),
+          localTime: Math.max(0, offset - (fx.startTime || 0)),
+        })),
+        ...activeEffectClips.map((fxClip) => ({
+          effectId: fxClip.mediaId || fxClip.id,
+          type:
+            fxClip.kind === "body-effect"
+              ? ("body_effect" as const)
+              : ("video_effect" as const),
+          renderer: (fxClip as any).renderer || fxClip.mediaId || fxClip.id,
+          parameters: { ...((fxClip as any).params || {}), name: fxClip.name },
+          intensity: normalizeEffectIntensity((fxClip as any).intensity),
+          localTime: Math.max(0, evalTime - fxClip.startTime),
+        })),
+      ],
+      // Apply filter from clip (if directly attached) OR from activeFilterClip (timeline filter track)
+      filter: clip.filter
+        ? {
+            ...clip.filter,
+            gradingParams: (clip as any).gradingParams,
+            lutId: (clip as any).lutId || (clip as any).lut,
+          }
+        : activeFilterClip
+          ? {
+              id: activeFilterClip.mediaId,
+              name: activeFilterClip.name || "",
+              intensity: normalizeFilterIntensity(
+                (activeFilterClip as any).intensity,
+              ),
+              gradingParams: (activeFilterClip as any).gradingParams,
+              lutId:
+                (activeFilterClip as any).lutId ||
+                (activeFilterClip as any).lut,
+            }
+          : undefined,
+    };
+
+    visualLayers.push(mediaLayer);
+  }
+
+  // ─── 3.1 Synthesize Foreground Subject Cutouts for "Behind Subject" Overlays ───
+  const behindSubjectClips = sortedClips.filter((c) =>
+    Boolean((c as any).behindSubject),
+  );
+  if (behindSubjectClips.length > 0) {
+    const synthesizedCutouts: EvaluatedMediaLayer[] = [];
+    const mediaLayers = visualLayers.filter(
+      (layer): layer is EvaluatedMediaLayer =>
+        layer.layerType === "media" &&
+        !layer.layerId.endsWith(":subject-cutout") &&
+        (layer.mediaType === "video" || layer.mediaType === "image"),
+    );
+
+    for (const behindClip of behindSubjectClips) {
+      const overlayLayers = visualLayers.filter(
+        (layer) => layer.clipId === behindClip.id,
+      );
+      for (const overlayLayer of overlayLayers) {
+        const feather =
+          typeof (behindClip as any).subjectFeather === "number"
+            ? (behindClip as any).subjectFeather
+            : 4;
+
+        const underlyingMedia = mediaLayers.filter(
+          (media) => media.zIndex < overlayLayer.zIndex,
+        );
+        for (const media of underlyingMedia) {
+          const cutoutLayerId = `${media.layerId}:subject-cutout`;
+          if (synthesizedCutouts.some((s) => s.layerId === cutoutLayerId))
+            continue;
+
+          synthesizedCutouts.push({
+            ...media,
+            layerId: cutoutLayerId,
+            zIndex: overlayLayer.zIndex + 0.5,
+            effects: [
+              ...(media.effects ?? []),
+              {
+                effectId: `fx-body-cutout-${media.layerId}`,
+                type: "body_effect" as const,
+                renderer: "body_cutout",
+                parameters: {
+                  feather,
+                },
+                intensity: 1.0,
+                localTime: media.sourceTime,
+              },
+            ],
+          });
+
+          traceCutoutEvent(
+            "eval",
+            `Synthesized cutout layer '${cutoutLayerId}' behind '${behindClip.id}'`,
+            {
+              behindClipId: behindClip.id,
+              targetMediaId: media.mediaId,
+              cutoutLayerId,
+              feather,
+              textZIndex: overlayLayer.zIndex,
+              cutoutZIndex: overlayLayer.zIndex + 0.5,
+            },
+          );
+        }
+      }
+    }
+
+    if (synthesizedCutouts.length > 0) {
+      const allVisual = [...visualLayers, ...synthesizedCutouts].sort(
+        (a, b) => a.zIndex - b.zIndex,
+      );
+      visualLayers.length = 0;
+      for (let idx = 0; idx < allVisual.length; idx++) {
+        visualLayers.push({
+          ...allVisual[idx],
+          zIndex: idx,
+        });
+      }
+    }
+  }
+
+  // ─── 4. Evaluate Audio Layers ─────────────────────────────────────────────
+
+  const audioLayers: EvaluatedAudioLayer[] = [];
+
+  for (const clip of sortedClips) {
+    const asset = assetMap.get(clip.mediaId);
+    const track = trackMap.get(clip.trackId);
+    const directAudioPath = (clip as any).audioPath as string | undefined;
+    // Audio layer creation:
+    // - Explicit audio role clips always create audio
+    // - Video assets with primary OR overlay role create audio (video tracks have audio)
+    const hasAudio =
+      clip.kind === "audio" ||
+      asset?.type === "audio" ||
+      asset?.type === "video" ||
+      Boolean(directAudioPath) ||
+      Boolean(clip.audio);
+    if (!hasAudio || (!asset && !directAudioPath) || asset?.isMissing) continue;
+
+    const sourceTime = resolveClipSourceTime(clip, evalTime, {
+      clampToRange: true,
+      frameRate: project?.frameRate ?? 30,
+    }).sourceTime;
+    const rawAudioPath = directAudioPath || asset?.path || "";
+    const sourcePath = rawAudioPath
+      ? isExternalOrDataUrl(rawAudioPath)
+        ? rawAudioPath
+        : convertFileSrc(rawAudioPath)
+      : "";
+    if (!sourcePath) continue;
+
+    const effectiveAudio = evaluateEffectiveAudioState(clip, track, evalTime, {
+      tracks,
+    });
+    const effectiveVolume = Math.max(0, Math.min(3.0, effectiveAudio.gain));
+
+    audioLayers.push({
+      layerId: `${clip.id}-audio`,
+      clipId: clip.id,
+      mediaId: clip.mediaId,
+      sourcePath,
+      sourceTime,
+      pan: effectiveAudio.pan,
+      priority: clip.trackIndex,
+      volume: effectiveVolume,
+      muted: effectiveAudio.muted,
+    });
+  }
+
+  audioLayers.sort((a, b) => b.priority - a.priority);
+
+  // ─── 5. Transitions ───────────────────────────────────────────────────────
+  const evaluatedTransitions: EvaluatedTransition[] = transitionWindows
+    .map<EvaluatedTransition | null>((transition) => {
+      const outgoingLayer = visualLayers.find(
+        (layer) => layer.clipId === transition.fromClip.id,
+      );
+      const incomingLayer = visualLayers.find(
+        (layer) => layer.clipId === transition.toClip.id,
+      );
+      if (!outgoingLayer || !incomingLayer) return null;
+      return {
+        transitionId: transition.transition.id,
+        type: transition.transition.type,
+        renderer: transition.transition.renderer, // Pass renderer from timeline transition
+        // Transition parameters are authored by Studio and persisted on the
+        // timeline item metadata. Keep them in the canonical scene so native
+        // preview/export and the compatibility compositor receive identical
+        // authoring data.
+        params: (transition.transition.metadata?.params ??
+          {}) as EvaluatedTransition["params"],
+        progress: transition.progress,
+        duration: transition.transition.placement.duration,
+        outgoingLayer: outgoingLayer.layerId,
+        incomingLayer: incomingLayer.layerId,
+        blendMode: "normal" as BlendMode,
+      };
+    })
+    .filter(
+      (transition): transition is EvaluatedTransition => transition !== null,
+    );
+
+  // ─── 6. Metadata ──────────────────────────────────────────────────────────
+
+  const activeMediaHash = visualLayers
+    .filter((l) => l.layerType === "media")
+    .map((l) => l.clipId)
+    .sort()
+    .join("|");
+
+  const metadata: SceneMetadata = {
+    time: evalTime,
+    canvasWidth: project?.canvasWidth ?? 1920,
+    canvasHeight: project?.canvasHeight ?? 1080,
+    frameRate: project?.frameRate ?? 30,
+    isGap: visualLayers.length === 0,
+    fallbackStrategy: visualLayers.length === 0 ? "black" : undefined,
+    activeMediaHash,
+    canvasBackground: project?.canvasBackground,
+  };
+
+  const activeFilter = activeFilterClip
+    ? {
+        id: activeFilterClip.mediaId,
+        name: activeFilterClip.name || "",
+        intensity: normalizeFilterIntensity(
+          (activeFilterClip as any).intensity,
+        ),
+        gradingParams: (activeFilterClip as any).gradingParams,
+        pipeline: (activeFilterClip as any).pipeline as "v2" | undefined,
+        effectStack: (activeFilterClip as any).effectStack as
+          | Array<{ type: string; params?: Record<string, unknown> }>
+          | undefined,
+      }
+    : undefined;
+
+  const evalDurationMs = performance.now() - evalStartMs;
+  workerPerfCollector.recordAnimationEval({
+    durationMs: evalDurationMs,
+    activeClips: activeClips.length,
+    visualLayers: visualLayers.length,
+    keyframeEvaluations: keyframeEvaluationsCount,
+    spatialEvaluations: spatialEvaluationsCount,
+    springEvaluations: springEvaluationsCount,
+    responsiveRetimes: responsiveRetimesCount,
+    culledLayers: 0,
+  });
+
+  return {
+    visualLayers,
+    audioLayers,
+    transitions: evaluatedTransitions,
+    metadata,
+    activeFilter,
+  };
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Top-Down Occlusion Culling for Professional NLE Multi-Track Compositing.
+ *
+ * Evaluates visual layers from foreground (highest z-index/top track) to background.
+ * If a foreground layer is 100% opaque, uses normal blend mode, has no masks/effects/chroma-key,
+ * and covers the full canvas, all layers beneath it are completely invisible and culled
+ * from video frame decoding, texture upload, and GPU compositing.
+ */
+export function isOpaqueFullFrameOccluder(
+  layer: EvaluatedVisualLayer,
+  canvasWidth: number,
+  canvasHeight: number,
+  transitionWindows: ActiveTransitionWindow[] = [],
+): boolean {
+  // Only media layers (video or opaque still images) can act as solid full-frame occluders
+  if (layer.layerType !== "media") return false;
+
+  // Must be fully opaque
+  if (layer.opacity < 0.999) return false;
+
+  // Must use standard 'normal' blend mode (other blend modes blend with background)
+  if (layer.blendMode && layer.blendMode !== "normal") return false;
+
+  // Animated stickers (GIF/Lottie) and transparent PNG overlays have alpha
+  if (layer.stickerFormat === "gif" || layer.stickerFormat === "lottie")
+    return false;
+
+  // Cannot have body segmentation effects, chroma key, or custom alpha shaders
+  if (
+    layer.effects &&
+    layer.effects.some((fx) => {
+      const r = (fx.renderer || fx.effectId || "").toLowerCase();
+      return (
+        r.includes("body") ||
+        r.includes("chroma") ||
+        r.includes("key") ||
+        r.includes("mask") ||
+        r.includes("alpha") ||
+        r.includes("glitch") ||
+        r.includes("dissolve")
+      );
+    })
+  ) {
+    return false;
+  }
+
+  // Cannot have masks
+  if (layer.masks && layer.masks.length > 0) return false;
+
+  // Cannot have crop
+  const crop = (layer as any).crop;
+  if (
+    crop &&
+    (crop.left > 0.001 ||
+      crop.top > 0.001 ||
+      crop.right > 0.001 ||
+      crop.bottom > 0.001)
+  ) {
+    return false;
+  }
+
+  // Cannot be part of an active transition window
+  const isInTransition =
+    layer.inTransition ||
+    transitionWindows.some(
+      (tw) => tw.fromClip.id === layer.clipId || tw.toClip.id === layer.clipId,
+    );
+  if (isInTransition) return false;
+
+  // Must not have rotation (or rotation must be multiple of 360)
+  const normRotation = Math.abs(layer.rotation % 360);
+  if (normRotation > 0.01 && normRotation < 359.99) return false;
+
+  // Must cover the full canvas area (with 1.0px subpixel float tolerance)
+  const coversX = layer.x <= 1.0 && layer.x + layer.width >= canvasWidth - 1.0;
+  const coversY =
+    layer.y <= 1.0 && layer.y + layer.height >= canvasHeight - 1.0;
+
+  return coversX && coversY;
+}
+
+/**
+ * Check whether a foreground layer completely occludes a background layer,
+ * even if neither layer covers the entire canvas (e.g. two stacked clips of the
+ * same size, or a larger clip stacked directly over a smaller clip).
+ */
+export function doesLayerOccludeLayer(
+  top: EvaluatedVisualLayer,
+  bottom: EvaluatedVisualLayer,
+  transitionWindows: ActiveTransitionWindow[] = [],
+): boolean {
+  if (top.layerType !== "media") return false;
+  if (top.opacity < 0.999) return false;
+  if (top.blendMode && top.blendMode !== "normal") return false;
+  if (top.stickerFormat === "gif" || top.stickerFormat === "lottie")
+    return false;
+
+  if (
+    top.effects &&
+    top.effects.some((fx) => {
+      const r = (fx.renderer || fx.effectId || "").toLowerCase();
+      return (
+        r.includes("body") ||
+        r.includes("chroma") ||
+        r.includes("key") ||
+        r.includes("mask") ||
+        r.includes("alpha") ||
+        r.includes("glitch") ||
+        r.includes("dissolve")
+      );
+    })
+  ) {
+    return false;
+  }
+
+  if (top.masks && top.masks.length > 0) return false;
+
+  const crop = (top as any).crop;
+  if (
+    crop &&
+    (crop.left > 0.001 ||
+      crop.top > 0.001 ||
+      crop.right > 0.001 ||
+      crop.bottom > 0.001)
+  ) {
+    return false;
+  }
+
+  const isInTransition =
+    top.inTransition ||
+    transitionWindows.some(
+      (tw) => tw.fromClip.id === top.clipId || tw.toClip.id === top.clipId,
+    );
+  if (isInTransition) return false;
+
+  const normRotation = Math.abs(top.rotation % 360);
+  if (normRotation > 0.01 && normRotation < 359.99) return false;
+
+  // Top must completely enclose bottom's bounding box (with 1.0px subpixel float tolerance)
+  const coversX =
+    top.x <= bottom.x + 1.0 &&
+    top.x + top.width >= bottom.x + bottom.width - 1.0;
+  const coversY =
+    top.y <= bottom.y + 1.0 &&
+    top.y + top.height >= bottom.y + bottom.height - 1.0;
+
+  return coversX && coversY;
+}
+
+export function cullOccludedVisualLayers(
+  visualLayers: readonly EvaluatedVisualLayer[],
+  canvasWidth: number,
+  canvasHeight: number,
+  transitionWindows: ActiveTransitionWindow[] = [],
+): EvaluatedVisualLayer[] {
+  if (visualLayers.length <= 1) return [...visualLayers];
+  const startMs = performance.now();
+
+  // 1. Top-down full-frame occlusion check:
+  // If an opaque layer covers the full canvas, all layers beneath it are discarded.
+  let remaining = [...visualLayers];
+  for (let i = remaining.length - 1; i >= 0; i--) {
+    const layer = remaining[i];
+    if (
+      isOpaqueFullFrameOccluder(
+        layer,
+        canvasWidth,
+        canvasHeight,
+        transitionWindows,
+      )
+    ) {
+      remaining = remaining.slice(i);
+      break;
+    }
+  }
+
+  let finalLayers = remaining;
+  if (remaining.length > 1) {
+    // 2. Relative layer-over-layer occlusion check:
+    // Discard any bottom layer that is completely covered by an opaque foreground layer.
+    finalLayers = remaining.filter((layer, index) => {
+      for (let j = index + 1; j < remaining.length; j++) {
+        if (doesLayerOccludeLayer(remaining[j], layer, transitionWindows)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  const culledCount = visualLayers.length - finalLayers.length;
+  if (culledCount > 0) {
+    const durationMs = performance.now() - startMs;
+    workerPerfCollector.record({
+      domain: "compositor:occlusion",
+      operation: "cullOccludedVisualLayers",
+      durationMs,
+      itemsCount: culledCount,
+      overBudget: durationMs > 5,
+    });
+  }
+
+  return finalLayers;
+}
+
+function normalizeEffectIntensity(value: unknown): number {
+  const numeric = typeof value === "number" ? value : 1;
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.max(0, Math.min(1, numeric));
+}
+
+interface ActiveTransitionWindow {
+  transition: TransitionTimelineItem;
+  fromClip: Clip;
+  toClip: Clip;
+  progress: number;
+}
+
+function resolveActiveTransitionWindows(
+  transitions: TransitionTimelineItem[],
+  clips: Clip[],
+  time: number,
+): ActiveTransitionWindow[] {
+  return transitions
+    .map((transition) => {
+      const start = transition.placement.startTime;
+      const duration = transition.placement.duration;
+      const end = start + duration;
+      if (duration <= 0 || time < start || time > end) return null;
+
+      const fromClip = clips.find((clip) => clip.id === transition.fromItemId);
+      const toClip = clips.find((clip) => clip.id === transition.toItemId);
+      if (!fromClip || !toClip) return null;
+
+      const rawProgress = Math.max(0, Math.min(1, (time - start) / duration));
+      // Map legacy "easeInOut" to "ease-in-out" for compatibility
+      const easing =
+        (transition.easing as string) === "easeInOut"
+          ? "ease-in-out"
+          : transition.easing;
+      const progress =
+        easing === "ease-in-out"
+          ? rawProgress * rawProgress * (3 - 2 * rawProgress)
+          : rawProgress;
+      return { transition, fromClip, toClip, progress };
+    })
+    .filter(
+      (transition): transition is ActiveTransitionWindow => transition !== null,
+    );
+}
+
+function evaluateTransitionState(
+  clip: Clip,
+  transitionWindows: ActiveTransitionWindow[],
+): {
+  inTransition: boolean;
+  type?: EvaluatedTransition["type"];
+  progress?: number;
+  opacity?: number;
+} {
+  const transition = transitionWindows.find(
+    (candidate) =>
+      candidate.fromClip.id === clip.id || candidate.toClip.id === clip.id,
+  );
+  if (!transition) return { inTransition: false, opacity: 1.0 };
+
+  const isOutgoing = transition.fromClip.id === clip.id;
+  const opacity = isOutgoing ? 1 - transition.progress : transition.progress;
+  return {
+    inTransition: true,
+    type: transition.transition.type,
+    progress: transition.progress,
+    opacity,
+  };
+}
+
+// ─── Cached variant ───────────────────────────────────────────────────────────
+
+/**
+ * Evaluate the NLE timeline with LRU caching and epoch-based invalidation.
+ * This is the recommended entry point for all preview/render paths.
+ */
+/**
+ * Pre-computed version strings for evaluateTimelineSceneCached.
+ * Pass these from the render loop to avoid re-running the O(n log n)
+ * sort+hash on every RAF tick (Audit 1.3 fix).
+ */
+export interface PrecomputedSceneVersions {
+  clipVersion: string;
+  assetsVersion: string;
+  effectsStoreVersion: string;
+}
+
+export function evaluateTimelineSceneCached(
+  time: number,
+  clips: Clip[],
+  tracks: Track[],
+  assets: MediaAsset[],
+  project: Project | null,
+  epoch: number = 0,
+  transitions: TransitionTimelineItem[] = [],
+  /** Optional: pass memoized hashes to skip O(n log n) recomputation on every RAF tick. */
+  precomputed?: PrecomputedSceneVersions,
+): EvaluatedScene {
+  const cache = getEvaluationCache();
+
+  // Audit 2.3 fix: apply the same end-of-timeline clamp the evaluator uses internally
+  // (evalTime = maxEndTime - 0.001 when time ∈ [maxEndTime, maxEndTime + 0.001)).
+  // Without this, the cache key embeds raw `time` while the evaluated scene is always
+  // identical in that window → every RAF tick at end-of-playback is a cache miss.
+  // One O(n) reduce is cheaper than the O(n log n) hash below and much cheaper than
+  // a full re-evaluation.
+  const maxEndTime = clips.reduce(
+    (max, clip) => Math.max(max, clip.startTime + clip.duration),
+    0,
+  );
+  const cacheTime =
+    maxEndTime > 0 && time >= maxEndTime && time < maxEndTime + 0.001
+      ? Math.max(0, maxEndTime - 0.001)
+      : time;
+
+  // Audit 1.3 fix: use caller-supplied precomputed hashes when available so the RAF
+  // loop doesn't re-run the full sort+hash pipeline on every frame.
+  const clipVersion =
+    precomputed?.clipVersion ?? computeClipVersion(clips, transitions);
+  const assetsVersion =
+    precomputed?.assetsVersion ?? computeAssetsVersion(assets);
+  const effectsStoreVersion =
+    precomputed?.effectsStoreVersion ??
+    computeEffectsStoreVersion(useEffectsStore.getState().definitions);
+  const canvasWidth = project?.canvasWidth ?? 1920;
+  const canvasHeight = project?.canvasHeight ?? 1080;
+  const backgroundVersion = computeCanvasBackgroundVersion(
+    project?.canvasBackground,
+  );
+  const cacheKey = {
+    time: cacheTime,
+    epoch,
+    clipVersion,
+    assetsVersion,
+    canvasWidth,
+    canvasHeight,
+    backgroundVersion,
+    effectsStoreVersion,
+  };
+
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const scene = evaluateTimelineScene(
+    time,
+    clips,
+    tracks,
+    assets,
+    project,
+    transitions,
+  );
+  cache.set(cacheKey, scene);
+  return scene;
+}
+
+export function getEvaluationCacheStats() {
+  return getEvaluationCache().getStats();
+}
+
+export function clearEvaluationCache() {
+  getEvaluationCache().clear();
+}
+
+export function invalidateEvaluationCache(epoch: number) {
+  getEvaluationCache().invalidateEpoch(epoch);
+}
+
+/**
+ * Resolve and normalize font family strings to exact loaded Fontsource font stacks.
+ *
+ * Delegates to the canonical font registry's O(1) alias map rather than
+ * maintaining a separate if-chain here. Fixes:
+ *   - "Roboto Condensed" → "Roboto Condensed Variable" (was "Roboto Condensed")
+ *   - "inter" → "Inter Variable" (was "Inter" for exact-match only)
+ *   - All bundled aliases resolve consistently with FontLoader
+ */
+export function normalizeFontFamily(family: string): string {
+  return resolveCanonicalFamily(family);
+}

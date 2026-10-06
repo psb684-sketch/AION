@@ -1,0 +1,717 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
+import { DndProvider } from "react-dnd";
+import { HTML5Backend } from "react-dnd-html5-backend";
+import { Clip } from "../Clip";
+import { clearFilmstripFrameCache } from "../ClipFilmstrip";
+import type { Clip as ClipType, MediaAsset } from "@/types";
+
+const filmstripFrames = ["data:image/png;base64,frame0", "data:image/png;base64,frame1", "data:image/png;base64,frame2", "data:image/png;base64,frame3"];
+
+vi.mock("@/lib/platform/tauri", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/platform/tauri")>();
+  return {
+    ...actual,
+    extractFilmstripFrames: vi.fn(() => Promise.resolve(filmstripFrames)),
+  };
+});
+
+vi.mock("@tauri-apps/api/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
+  class MockChannel {
+    onmessage: ((msg: unknown) => void) | null = null;
+  }
+  return {
+    ...actual,
+    Channel: MockChannel as unknown as typeof actual.Channel,
+    convertFileSrc: (path: string) => path,
+    invoke: vi.fn(async (_cmd: string, args: Record<string, unknown>) => {
+      const ch = args.onTile as MockChannel | undefined;
+      const fc = Math.min(Math.max(Number(args.frameCount) || 4, 1), 100);
+      if (ch?.onmessage) {
+        for (let i = 0; i < fc; i++) {
+          ch.onmessage({ index: i, time: 0, path: "/tmp/tile.webp" });
+        }
+      }
+    }),
+  };
+});
+
+// Mock stores
+const mockSelectClip = vi.fn();
+const mockToggleClipSelection = vi.fn();
+const mockUpdateClip = vi.fn();
+
+const uiStoreState = {
+  selectedClipIds: [] as string[],
+  expandedKeyframeClipIds: [] as string[],
+  selectClip: mockSelectClip,
+  toggleClipSelection: mockToggleClipSelection,
+  toggleKeyframeLane: vi.fn(),
+};
+
+vi.mock("@/store/uiStore", () => {
+  const store = (selector?: (s: any) => any) => (selector ? selector(uiStoreState) : uiStoreState);
+  store.getState = () => uiStoreState;
+  return { useUIStore: store };
+});
+
+const timelineStoreState = {
+  updateClip: mockUpdateClip,
+  rippleEditEnabled: false,
+  rippleTrimClip: vi.fn(),
+  snapEnabled: false,
+  setSnapGuides: vi.fn(),
+  clearSnapGuides: vi.fn(),
+};
+
+vi.mock("@/store/timelineStore", () => {
+  const store = (selector?: (s: any) => any) => (selector ? selector(timelineStoreState) : timelineStoreState);
+  store.getState = () => timelineStoreState;
+  return { useTimelineStore: store };
+});
+
+const createMockClip = (overrides?: Partial<ClipType>): ClipType => ({
+  id: "clip-1",
+  trackId: "track-1",
+  mediaId: "media-1",
+  startTime: 5,
+  duration: 10,
+  trimIn: 0,
+  trimOut: 10,
+  x: 0,
+  y: 0,
+  width: 1920,
+  height: 1080,
+  opacity: 1,
+  rotation: 0,
+  ...overrides,
+});
+
+const createMockMediaAsset = (overrides?: Partial<MediaAsset>): MediaAsset => ({
+  id: "media-1",
+  name: "test-video.mp4",
+  path: "/path/to/video.mp4",
+  type: "video",
+  duration: 30,
+  width: 1920,
+  height: 1080,
+  posterFrame: "data:image/png;base64,test",
+  size: 1024000,
+  ...overrides,
+});
+
+const renderClip = (clip: ClipType, mediaAsset?: MediaAsset, props?: Partial<any>) => {
+  return render(
+    <DndProvider backend={HTML5Backend}>
+      <div style={{ position: "relative", width: "1000px", height: "68px" }}>
+        <Clip clip={clip} mediaAsset={mediaAsset} pixelsPerSecond={100} selected={false} locked={false} {...props} />
+      </div>
+    </DndProvider>,
+  );
+};
+
+describe("Clip Component", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearFilmstripFrameCache();
+  });
+
+  describe("Rendering", () => {
+    it("renders clip with correct position and width", () => {
+      const clip = createMockClip({ startTime: 5, duration: 10 });
+      renderClip(clip);
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement).toBeInTheDocument();
+      expect(clipElement.style.left).toBe("500px"); // 5 * 100
+      expect(clipElement.style.width).toBe("1000px"); // 10 * 100
+    });
+
+    it("displays media asset name", () => {
+      const clip = createMockClip();
+      const mediaAsset = createMockMediaAsset({ name: "my-video.mp4" });
+      renderClip(clip, mediaAsset);
+
+      expect(screen.getByText("my-video.mp4")).toBeInTheDocument();
+    });
+
+    it("displays formatted duration", () => {
+      const clip = createMockClip({ duration: 125 }); // 2 minutes 5 seconds
+      renderClip(clip);
+
+      expect(screen.getByText("00:02:05:00")).toBeInTheDocument();
+    });
+
+    it("shows video filmstrip canvas after rendering", async () => {
+      vi.useFakeTimers();
+      try {
+        const clip = createMockClip();
+        const mediaAsset = createMockMediaAsset({ posterFrame: "data:image/png;base64,test" });
+        renderClip(clip, mediaAsset);
+        await act(async () => {});
+
+        // ClipFilmstrip now renders to a <canvas>, not <img> tiles.
+        expect(screen.getByTestId("clip-filmstrip")).toBeInTheDocument();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300);
+        });
+
+        expect(screen.getByTestId("clip-filmstrip")).toBeInTheDocument();
+        // Canvas element is present (not img tags)
+        const canvas = screen.getByTestId("clip-filmstrip").querySelector("canvas");
+        expect(canvas).not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("renders a dedicated audio waveform lane for video clips", () => {
+      renderClip(createMockClip(), createMockMediaAsset());
+
+      expect(screen.getByTestId("clip-audio-waveform")).toBeInTheDocument();
+    });
+
+    it("renders an audio-kind clip as waveform even when its asset is a video", () => {
+      renderClip(createMockClip({ kind: "audio", audioPath: "/path/to/video.mp4" }), createMockMediaAsset());
+
+      expect(screen.queryByTestId("clip-filmstrip")).not.toBeInTheDocument();
+    });
+
+    it("applies selected styling when selected", () => {
+      const clip = createMockClip();
+      renderClip(clip, undefined, { selected: true });
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.className).toContain("border-accent-soft");
+      expect(clipElement.className).toContain("border");
+    });
+
+    it("applies locked styling when locked", () => {
+      const clip = createMockClip();
+      renderClip(clip, undefined, { locked: true });
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.className).toContain("cursor-not-allowed");
+    });
+
+    it("shows audio clip styling for audio assets", () => {
+      const clip = createMockClip();
+      const mediaAsset = createMockMediaAsset({ type: "audio" });
+      renderClip(clip, mediaAsset);
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.className).toContain("bg-timeline-clip-audio");
+    });
+  });
+
+  describe("Selection", () => {
+    it("has click handler attached", () => {
+      const clip = createMockClip();
+      renderClip(clip);
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement).toBeInTheDocument();
+
+      // Verify the element is clickable (has onClick handler)
+      expect(clipElement.onclick).toBeDefined();
+    });
+
+    it("does not call selectClip when locked", () => {
+      const clip = createMockClip();
+      renderClip(clip, undefined, { locked: true });
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      fireEvent.click(clipElement);
+
+      expect(mockSelectClip).not.toHaveBeenCalled();
+    });
+
+    it("shows correct styling for locked state", () => {
+      const clip = createMockClip();
+      renderClip(clip, undefined, { locked: true });
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.className).toContain("cursor-not-allowed");
+    });
+  });
+
+  describe("Resize Handles", () => {
+    it("hides both resize handles until the clip is selected", () => {
+      const clip = createMockClip();
+      renderClip(clip);
+
+      const leftHandle = screen.getByTestId("clip-clip-1-resize-left");
+      const rightHandle = screen.getByTestId("clip-clip-1-resize-right");
+
+      expect(leftHandle.className).toContain("opacity-0");
+      expect(rightHandle.className).toContain("opacity-0");
+      expect(leftHandle.className).toContain("pointer-events-none");
+      expect(rightHandle.className).toContain("pointer-events-none");
+    });
+
+    it("shows both resize handles when the clip is selected", () => {
+      const clip = createMockClip();
+      renderClip(clip, undefined, { selected: true });
+
+      const leftHandle = screen.getByTestId("clip-clip-1-resize-left");
+      const rightHandle = screen.getByTestId("clip-clip-1-resize-right");
+
+      expect(leftHandle.className).toContain("opacity-100");
+      expect(rightHandle.className).toContain("opacity-100");
+      expect(leftHandle.className).toContain("pointer-events-auto");
+      expect(rightHandle.className).toContain("pointer-events-auto");
+    });
+
+    it("renders left resize handle", () => {
+      const clip = createMockClip();
+      renderClip(clip);
+
+      const leftHandle = screen.getByTestId("clip-clip-1-resize-left");
+      expect(leftHandle).toBeInTheDocument();
+      expect(leftHandle.style.cursor).toBe("col-resize");
+    });
+
+    it("renders right resize handle", () => {
+      const clip = createMockClip();
+      renderClip(clip);
+
+      const rightHandle = screen.getByTestId("clip-clip-1-resize-right");
+      expect(rightHandle).toBeInTheDocument();
+      expect(rightHandle.style.cursor).toBe("col-resize");
+    });
+
+    it("has correct width for resize handles", () => {
+      const clip = createMockClip();
+      renderClip(clip);
+
+      const leftHandle = screen.getByTestId("clip-clip-1-resize-left");
+      const rightHandle = screen.getByTestId("clip-clip-1-resize-right");
+
+      expect(leftHandle.className).toContain("w-3");
+      expect(rightHandle.className).toContain("w-3");
+    });
+
+    it("renders the visible trim grips at full clip height", () => {
+      const clip = createMockClip();
+      renderClip(clip);
+
+      const leftGrip = screen.getByTestId("clip-clip-1-resize-left").firstElementChild;
+      const rightGrip = screen.getByTestId("clip-clip-1-resize-right").firstElementChild;
+
+      expect(leftGrip?.className).toContain("h-full");
+      expect(rightGrip?.className).toContain("h-full");
+    });
+  });
+
+  it("applies muted visual treatment to a B-roll clip", () => {
+    const clip = createMockClip();
+    renderClip(clip, undefined, {
+      trackVisualRole: "b-roll",
+      trackVisualOpacity: 0.8,
+    });
+
+    const clipElement = screen.getByTestId("clip-clip-1");
+    expect(clipElement).toHaveStyle({ opacity: "0.8" });
+    expect(clipElement.className).toContain("border-accent/30");
+  });
+
+  describe("Resize Logic Validation", () => {
+    it("calculates correct values for left edge resize", () => {
+      // Test the resize calculation logic
+      const initialStartTime = 5;
+      const initialDuration = 10;
+      const initialTrimIn = 0;
+      const deltaTime = 2; // Moving right by 2 seconds
+
+      const newStartTime = initialStartTime + deltaTime;
+      const newDuration = initialDuration - (newStartTime - initialStartTime);
+      const newTrimIn = initialTrimIn + (newStartTime - initialStartTime);
+
+      expect(newStartTime).toBe(7);
+      expect(newDuration).toBe(8);
+      expect(newTrimIn).toBe(2);
+    });
+
+    it("calculates correct values for right edge resize", () => {
+      // Test the resize calculation logic
+      const initialDuration = 10;
+      const initialTrimIn = 0;
+      const deltaTime = 2; // Extending by 2 seconds
+
+      const newDuration = initialDuration + deltaTime;
+      const newTrimOut = initialTrimIn + newDuration;
+
+      expect(newDuration).toBe(12);
+      expect(newTrimOut).toBe(12);
+    });
+
+    it("validates minimum duration constraint", () => {
+      const minDuration = 0.1;
+      const testDurations = [0, 0.05, 0.09, 0.1, 0.5, 1.0];
+
+      testDurations.forEach((duration) => {
+        const isValid = duration >= minDuration;
+        if (duration < minDuration) {
+          expect(isValid).toBe(false);
+        } else {
+          expect(isValid).toBe(true);
+        }
+      });
+    });
+
+    it("validates trim in range constraint", () => {
+      const trimOut = 10;
+      const testTrimIns = [-1, 0, 5, 9.9, 10, 11];
+
+      testTrimIns.forEach((trimIn) => {
+        const isValid = trimIn >= 0 && trimIn < trimOut;
+        if (trimIn < 0 || trimIn >= trimOut) {
+          expect(isValid).toBe(false);
+        } else {
+          expect(isValid).toBe(true);
+        }
+      });
+    });
+
+    it("validates trim out range constraint", () => {
+      const mediaDuration = 30;
+      const testTrimOuts = [0, 10, 29.9, 30, 31];
+
+      testTrimOuts.forEach((trimOut) => {
+        const isValid = trimOut <= mediaDuration;
+        if (trimOut > mediaDuration) {
+          expect(isValid).toBe(false);
+        } else {
+          expect(isValid).toBe(true);
+        }
+      });
+    });
+
+    it("prevents negative start time", () => {
+      const initialStartTime = 2;
+      const deltaTime = -5; // Would make startTime negative
+
+      const newStartTime = Math.max(0, initialStartTime + deltaTime);
+      expect(newStartTime).toBe(0);
+      expect(newStartTime).toBeGreaterThanOrEqual(0);
+    });
+
+    it("maintains clip integrity during resize", () => {
+      // Verify that trimOut = trimIn + duration
+      const trimIn = 2;
+      const duration = 8;
+      const trimOut = trimIn + duration;
+
+      expect(trimOut).toBe(10);
+      expect(trimOut).toBeGreaterThan(trimIn);
+    });
+
+    it("calculates delta time from pixel movement", () => {
+      const pixelsPerSecond = 100;
+      const deltaX = 200; // pixels
+      const deltaTime = deltaX / pixelsPerSecond;
+
+      expect(deltaTime).toBe(2); // seconds
+    });
+
+    it("handles negative delta for left movement", () => {
+      const initialDuration = 10;
+      const deltaTime = -2; // Moving left
+
+      const newDuration = Math.max(0.1, initialDuration + deltaTime);
+      expect(newDuration).toBe(8);
+    });
+
+    it("enforces minimum duration when shrinking", () => {
+      const initialDuration = 0.5;
+      const deltaTime = -1; // Would make duration negative
+
+      const newDuration = Math.max(0.1, initialDuration + deltaTime);
+      expect(newDuration).toBe(0.1);
+      expect(newDuration).toBeGreaterThanOrEqual(0.1);
+    });
+  });
+
+  describe("Locked State", () => {
+    it("prevents selection when locked", () => {
+      const clip = createMockClip();
+      renderClip(clip, undefined, { locked: true });
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      fireEvent.click(clipElement);
+
+      expect(mockSelectClip).not.toHaveBeenCalled();
+    });
+
+    it("shows locked cursor when locked", () => {
+      const clip = createMockClip();
+      renderClip(clip, undefined, { locked: true });
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.className).toContain("cursor-not-allowed");
+    });
+
+    it("applies locked prop correctly", () => {
+      const clip = createMockClip();
+      const { rerender } = renderClip(clip, undefined, { locked: false });
+
+      let clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.className).not.toContain("cursor-not-allowed");
+
+      // Rerender with locked=true
+      rerender(
+        <DndProvider backend={HTML5Backend}>
+          <div style={{ position: "relative", width: "1000px", height: "68px" }}>
+            <Clip clip={clip} mediaAsset={undefined} pixelsPerSecond={100} selected={false} locked={true} />
+          </div>
+        </DndProvider>,
+      );
+
+      clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.className).toContain("cursor-not-allowed");
+    });
+  });
+
+  describe("Edge Cases", () => {
+    it("handles clip with zero duration gracefully", () => {
+      const clip = createMockClip({ duration: 0 });
+      renderClip(clip);
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.style.width).toBe("0px");
+    });
+
+    it("handles clip without media asset", () => {
+      const clip = createMockClip();
+      renderClip(clip, undefined);
+
+      expect(screen.getByText("Clip")).toBeInTheDocument();
+    });
+
+    it("handles media asset without poster frame", async () => {
+      const clip = createMockClip();
+      const mediaAsset = createMockMediaAsset({ posterFrame: undefined });
+      renderClip(clip, mediaAsset);
+      await act(async () => {});
+
+      // Without a poster frame and without debounce, invoke fires immediately.
+      // The mock resolves synchronously so the filmstrip goes straight to ready.
+      expect(screen.getByTestId("clip-filmstrip")).toBeInTheDocument();
+    });
+
+    it("formats duration correctly for various times", () => {
+      const testCases = [
+        { duration: 0, expected: "00:00:00:00" },
+        { duration: 59, expected: "00:00:59:00" },
+        { duration: 60, expected: "00:01:00:00" },
+        { duration: 125, expected: "00:02:05:00" },
+        { duration: 3661, expected: "00:61:01:00" },
+      ];
+
+      testCases.forEach(({ duration, expected }) => {
+        const clip = createMockClip({ duration });
+        const { unmount } = renderClip(clip);
+        expect(screen.getByText(expected)).toBeInTheDocument();
+        unmount();
+      });
+    });
+
+    it("handles very small clips", () => {
+      const clip = createMockClip({ duration: 0.1 });
+      renderClip(clip);
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.style.width).toBe("10px"); // 0.1 * 100
+    });
+
+    it("handles very large clips", () => {
+      const clip = createMockClip({ duration: 3600 }); // 1 hour
+      renderClip(clip);
+
+      const clipElement = screen.getByTestId("clip-clip-1");
+      expect(clipElement.style.width).toBe("360000px"); // 3600 * 100
+    });
+  });
+
+  describe("Pixel to Time Conversion", () => {
+    it("converts pixels to time correctly at different zoom levels", () => {
+      const testCases = [
+        { pixelsPerSecond: 50, pixels: 100, expectedTime: 2 },
+        { pixelsPerSecond: 100, pixels: 100, expectedTime: 1 },
+        { pixelsPerSecond: 200, pixels: 100, expectedTime: 0.5 },
+      ];
+
+      testCases.forEach(({ pixelsPerSecond, pixels, expectedTime }) => {
+        const time = pixels / pixelsPerSecond;
+        expect(time).toBe(expectedTime);
+      });
+    });
+
+    it("converts time to pixels correctly", () => {
+      const testCases = [
+        { time: 5, pixelsPerSecond: 100, expectedPixels: 500 },
+        { time: 10, pixelsPerSecond: 50, expectedPixels: 500 },
+        { time: 2.5, pixelsPerSecond: 200, expectedPixels: 500 },
+      ];
+
+      testCases.forEach(({ time, pixelsPerSecond, expectedPixels }) => {
+        const pixels = time * pixelsPerSecond;
+        expect(pixels).toBe(expectedPixels);
+      });
+    });
+  });
+
+  describe("Trim Calculations", () => {
+    it("calculates source time correctly", () => {
+      const clip = createMockClip({ startTime: 5, trimIn: 2 });
+      const currentTime = 8; // 3 seconds into the clip
+
+      const sourceTime = clip.trimIn + (currentTime - clip.startTime);
+      expect(sourceTime).toBe(5); // trimIn(2) + 3 seconds
+    });
+
+    it("respects trim in and trim out boundaries", () => {
+      const clip = createMockClip({ trimIn: 2, trimOut: 12, duration: 10 });
+
+      expect(clip.trimOut - clip.trimIn).toBe(clip.duration);
+    });
+
+    it("validates trim range is within media duration", () => {
+      const mediaDuration = 30;
+      const trimIn = 5;
+      const trimOut = 25;
+
+      expect(trimIn).toBeGreaterThanOrEqual(0);
+      expect(trimOut).toBeLessThanOrEqual(mediaDuration);
+      expect(trimOut).toBeGreaterThan(trimIn);
+    });
+  });
+
+  describe("Keyboard Navigation & Accessibility (Finding 8.1)", () => {
+    it("renders with tabIndex=-1 so clips do not steal keyboard focus", () => {
+      const clip = createMockClip({ id: "clip-unlocked" });
+      const { unmount } = renderClip(clip, undefined, { locked: false });
+
+      const clipElement = screen.getByTestId("clip-clip-unlocked");
+      expect(clipElement).toHaveAttribute("tabindex", "-1");
+      unmount();
+
+      const lockedClip = createMockClip({ id: "clip-locked" });
+      renderClip(lockedClip, undefined, { locked: true });
+      const lockedElement = screen.getByTestId("clip-clip-locked");
+      expect(lockedElement).toHaveAttribute("tabindex", "-1");
+    });
+
+    it("renders complete ARIA semantics and accessible description", () => {
+      const clip = createMockClip({
+        id: "clip-a11y",
+        name: "Intro Sequence",
+        trackId: "track-1",
+        startTime: 4.5,
+        duration: 12.0,
+      });
+
+      renderClip(clip, undefined, { selected: true, locked: false });
+
+      const element = screen.getByTestId("clip-clip-a11y");
+      expect(element).toHaveAttribute("role", "button");
+      expect(element).toHaveAttribute("aria-selected", "true");
+      expect(element).toHaveAttribute("aria-disabled", "false");
+      expect(element).toHaveAttribute("aria-haspopup", "menu");
+      expect(element.getAttribute("aria-label")).toContain("Intro Sequence");
+      expect(element.getAttribute("aria-label")).toContain("track track-1");
+      expect(element.getAttribute("aria-label")).toContain("start 4.50 seconds");
+      expect(element.getAttribute("aria-label")).toContain("duration 12.00 seconds");
+      expect(element.getAttribute("aria-label")).toContain("selected");
+    });
+
+    it("selects clip on Enter keypress and does not intercept Space key", () => {
+      const clip = createMockClip({ id: "clip-kb-select" });
+      renderClip(clip);
+
+      const element = screen.getByTestId("clip-clip-kb-select");
+
+      fireEvent.keyDown(element, { key: "Enter" });
+      expect(mockSelectClip).toHaveBeenCalledWith("clip-kb-select");
+      mockSelectClip.mockClear();
+
+      fireEvent.keyDown(element, { key: " " });
+      expect(mockSelectClip).not.toHaveBeenCalled();
+    });
+
+    it("toggles multi-selection on Shift+Enter keypress", () => {
+      const clip = createMockClip({ id: "clip-shift-select" });
+      renderClip(clip);
+
+      const element = screen.getByTestId("clip-clip-shift-select");
+
+      fireEvent.keyDown(element, { key: "Enter", shiftKey: true });
+      expect(mockToggleClipSelection).toHaveBeenCalledWith("clip-shift-select");
+    });
+
+    it("deselects clip on Escape keypress when selected", () => {
+      const clip = createMockClip({ id: "clip-escape" });
+      renderClip(clip, undefined, { selected: true });
+
+      const element = screen.getByTestId("clip-clip-escape");
+
+      fireEvent.keyDown(element, { key: "Escape" });
+      expect(mockSelectClip).toHaveBeenCalledWith(null);
+    });
+
+    it("triggers onContextMenu on ContextMenu key and Shift+F10", () => {
+      const clip = createMockClip({ id: "clip-context-kb" });
+      const onContextMenu = vi.fn();
+      renderClip(clip, undefined, { onContextMenu });
+
+      const element = screen.getByTestId("clip-clip-context-kb");
+
+      fireEvent.keyDown(element, { key: "ContextMenu" });
+      expect(onContextMenu).toHaveBeenCalledWith(expect.anything(), "clip-context-kb");
+
+      onContextMenu.mockClear();
+      fireEvent.keyDown(element, { key: "F10", shiftKey: true });
+      expect(onContextMenu).toHaveBeenCalledWith(expect.anything(), "clip-context-kb");
+    });
+
+    it("nudges clip startTime with Alt+ArrowRight and Alt+ArrowLeft", () => {
+      const clip = createMockClip({ id: "clip-nudge", startTime: 5.0 });
+      renderClip(clip);
+
+      const element = screen.getByTestId("clip-clip-nudge");
+
+      // Nudge right 1 frame (1/30s ≈ 0.0333s)
+      fireEvent.keyDown(element, { key: "ArrowRight", altKey: true });
+      expect(mockUpdateClip).toHaveBeenCalledWith("clip-nudge", {
+        startTime: 5.0 + 1 / 30,
+      });
+
+      // Nudge right with Shift (1.0s)
+      fireEvent.keyDown(element, { key: "ArrowRight", altKey: true, shiftKey: true });
+      expect(mockUpdateClip).toHaveBeenCalledWith("clip-nudge", {
+        startTime: 6.0,
+      });
+
+      // Nudge left 1 frame
+      fireEvent.keyDown(element, { key: "ArrowLeft", altKey: true });
+      expect(mockUpdateClip).toHaveBeenCalledWith("clip-nudge", {
+        startTime: 5.0 - 1 / 30,
+      });
+    });
+
+    it("does not allow keyboard actions when clip is locked", () => {
+      const clip = createMockClip({ id: "clip-locked-kb" });
+      renderClip(clip, undefined, { locked: true });
+
+      const element = screen.getByTestId("clip-clip-locked-kb");
+
+      fireEvent.keyDown(element, { key: "Enter" });
+      expect(mockSelectClip).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(element, { key: "ArrowRight", altKey: true });
+      expect(mockUpdateClip).not.toHaveBeenCalled();
+    });
+  });
+});

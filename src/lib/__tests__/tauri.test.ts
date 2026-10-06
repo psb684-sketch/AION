@@ -1,0 +1,628 @@
+/**
+ * Tauri IPC Bridge Tests
+ *
+ * Tests the communication layer between frontend and Rust backend.
+ * Covers: normalizePathForTauriInvoke, decodeFrame, decodeFramesStreaming,
+ *         releaseVideoDecoder, native preview — the current tauri.ts API.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { invoke, Channel } from "@tauri-apps/api/core";
+import {
+  normalizePathForTauriInvoke,
+  decodeFrame,
+  decodeFramesStreaming,
+  releaseVideoDecoder,
+  streamTimelineFramesBinary,
+  prewarmDecoders,
+  getVideoRenderMetadata,
+  renderNativePreviewFrame,
+  renderNativeProjectFrame,
+  renderNativeVideoProjectFrame,
+  getNativePreviewSurfaceGeometry,
+} from "../platform/tauri";
+import { DensityLevel } from "@/types";
+
+// ─── Mocks ────────────────────────────────────────────────────────────────────
+
+const { mockInvoke, MockChannelClass, mockInnerPosition, mockOuterPosition } =
+  vi.hoisted(() => {
+    const mockInvoke = vi.fn(async (cmd: string, _args?: any) => {
+      if (
+        cmd === "plugin:window|inner_position" ||
+        cmd.includes("inner_position")
+      ) {
+        return { Physical: { x: 200, y: 150 } };
+      }
+      if (
+        cmd === "plugin:window|outer_position" ||
+        cmd.includes("outer_position")
+      ) {
+        return { Physical: { x: 200, y: 22 } };
+      }
+      return undefined;
+    });
+    class MockChannelClass {
+      onmessage: ((msg: unknown) => void) | null = null;
+    }
+    const mockInnerPosition = vi
+      .fn()
+      .mockResolvedValue({ Physical: { x: 100, y: 50 } });
+    const mockOuterPosition = vi
+      .fn()
+      .mockResolvedValue({ Physical: { x: 100, y: 22 } });
+    return {
+      mockInvoke,
+      MockChannelClass,
+      mockInnerPosition,
+      mockOuterPosition,
+    };
+  });
+
+// Stub Tauri internals globally for this test suite
+Object.defineProperty(window, "__TAURI_INTERNALS__", {
+  value: {
+    invoke: (cmd: string, args: any) => mockInvoke(cmd, args),
+    transformCallback: vi.fn((cb) => cb),
+    metadata: { currentWindow: { label: "main" } },
+  },
+  writable: true,
+  configurable: true,
+});
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: mockInvoke,
+  Channel: MockChannelClass,
+  isTauri: () => true,
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: vi.fn(() => ({
+    innerPosition: mockInnerPosition,
+    outerPosition: mockOuterPosition,
+    onMoved: vi.fn().mockResolvedValue(() => {}),
+  })),
+}));
+
+// ─── normalizePathForTauriInvoke ──────────────────────────────────────────────
+
+describe("normalizePathForTauriInvoke", () => {
+  it("returns non-file:// paths unchanged", () => {
+    expect(normalizePathForTauriInvoke("/home/user/video.mp4")).toBe(
+      "/home/user/video.mp4",
+    );
+    expect(normalizePathForTauriInvoke("C:\\Users\\video.mp4")).toBe(
+      "C:\\Users\\video.mp4",
+    );
+    expect(normalizePathForTauriInvoke("")).toBe("");
+  });
+
+  it("strips file:// prefix on Unix paths", () => {
+    expect(normalizePathForTauriInvoke("file:///home/user/video.mp4")).toBe(
+      "/home/user/video.mp4",
+    );
+  });
+
+  it("strips file:// prefix on Windows paths", () => {
+    expect(normalizePathForTauriInvoke("file:///C:/Users/user/video.mp4")).toBe(
+      "C:/Users/user/video.mp4",
+    );
+  });
+
+  it("decodes percent-encoded characters", () => {
+    expect(
+      normalizePathForTauriInvoke("file:///home/user/my%20video.mp4"),
+    ).toBe("/home/user/my video.mp4");
+    expect(normalizePathForTauriInvoke("file:///home/user/caf%C3%A9.mp4")).toBe(
+      "/home/user/café.mp4",
+    );
+  });
+
+  it("trims leading/trailing whitespace before processing", () => {
+    expect(normalizePathForTauriInvoke("  /home/user/video.mp4  ")).toBe(
+      "/home/user/video.mp4",
+    );
+    expect(normalizePathForTauriInvoke("  file:///home/video.mp4  ")).toBe(
+      "/home/video.mp4",
+    );
+  });
+
+  it("handles asset:// URLs (normalizes to native path)", () => {
+    const url = "asset://localhost/test/video.mp4";
+    expect(normalizePathForTauriInvoke(url)).toBe("/test/video.mp4");
+  });
+
+  it("handles asset:// URLs with encoded slashes on macOS/Linux", () => {
+    const url = "asset://localhost/%2Ftest%2Fvideo.mp4";
+    expect(normalizePathForTauriInvoke(url)).toBe("/test/video.mp4");
+  });
+
+  it("handles http://asset.localhost/ and https://asset.localhost/ URLs under Tauri v2", () => {
+    const macUrl = "http://asset.localhost/%2Ftest%2Fvideo.mp4";
+    expect(normalizePathForTauriInvoke(macUrl)).toBe("/test/video.mp4");
+
+    const winUrl = "https://asset.localhost/C%3A%5CUsers%5Ctest%5Cvideo.mp4";
+    expect(normalizePathForTauriInvoke(winUrl)).toBe(
+      "C:\\Users\\test\\video.mp4",
+    );
+
+    const winUrlForward = "https://asset.localhost/C%3A/Users/test/video.mp4";
+    expect(normalizePathForTauriInvoke(winUrlForward)).toBe(
+      "C:/Users/test/video.mp4",
+    );
+  });
+});
+
+// ─── decodeFrame ─────────────────────────────────────────────────────────────
+
+describe("decodeFrame", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.clearAllMocks());
+
+  it("calls decode_frame with normalized path", async () => {
+    const mockDataUrl = "data:image/webp;base64,abc=";
+    vi.mocked(invoke).mockResolvedValueOnce(mockDataUrl);
+
+    const result = await decodeFrame("/test/video.mp4", 5.0, 1920, 1080);
+
+    expect(invoke).toHaveBeenCalledWith("decode_frame", {
+      videoPath: "/test/video.mp4",
+      timeSecs: 5.0,
+      width: 1920,
+      height: 1080,
+    });
+    expect(result).toBe(mockDataUrl);
+  });
+
+  it("normalizes file:// URLs before invoking", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce("data:image/webp;base64,x=");
+    await decodeFrame("file:///Users/test/clip.mov", 1.0, 320, 180);
+
+    expect(invoke).toHaveBeenCalledWith(
+      "decode_frame",
+      expect.objectContaining({
+        videoPath: "/Users/test/clip.mov",
+      }),
+    );
+  });
+
+  it("propagates Rust errors as thrown exceptions", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("FFmpeg not found"));
+    await expect(
+      decodeFrame("/test/video.mp4", 1.0, 1920, 1080),
+    ).rejects.toThrow("FFmpeg not found");
+  });
+
+  it("propagates file not found errors", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(
+      new Error("No such file or directory"),
+    );
+    await expect(
+      decodeFrame("/nonexistent.mp4", 1.0, 1920, 1080),
+    ).rejects.toThrow("No such file");
+  });
+
+  it("propagates codec errors", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(
+      new Error("Unknown decoder 'hevc'"),
+    );
+    await expect(
+      decodeFrame("/test/hevc.mp4", 1.0, 1920, 1080),
+    ).rejects.toThrow("Unknown decoder");
+  });
+
+  it("handles concurrent decode calls independently", async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("data:image/webp;base64,first=")
+      .mockResolvedValueOnce("data:image/webp;base64,second=");
+
+    const [r1, r2] = await Promise.all([
+      decodeFrame("/test/v1.mp4", 1.0, 1920, 1080),
+      decodeFrame("/test/v2.mp4", 2.0, 1920, 1080),
+    ]);
+
+    expect(r1).toBe("data:image/webp;base64,first=");
+    expect(r2).toBe("data:image/webp;base64,second=");
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("handles boundary time values", async () => {
+    const times = [0, 0.033, 1, 59.94, 3600];
+    for (const t of times) {
+      vi.mocked(invoke).mockResolvedValueOnce("data:image/webp;base64,x=");
+      await decodeFrame("/test/video.mp4", t, 1920, 1080);
+      expect(invoke).toHaveBeenCalledWith(
+        "decode_frame",
+        expect.objectContaining({ timeSecs: t }),
+      );
+      vi.clearAllMocks();
+    }
+  });
+
+  it("handles never-resolving invoke (custom timeout)", async () => {
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise(() => {}));
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Custom timeout")), 100),
+    );
+    await expect(
+      Promise.race([decodeFrame("/test/video.mp4", 1.0, 1920, 1080), timeout]),
+    ).rejects.toThrow("Custom timeout");
+  });
+
+  it("handles slow invoke response", async () => {
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => r("data:image/webp;base64,slow="), 50),
+        ),
+    );
+    const result = await decodeFrame("/test/video.mp4", 1.0, 1920, 1080);
+    expect(result).toBe("data:image/webp;base64,slow=");
+  });
+
+  // Parameter type tests — test runtime pass-through
+  it("handles string where number expected for timeSecs", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Invalid type"));
+    await expect(
+      decodeFrame(
+        "/test/video.mp4",
+        "not-a-number" as unknown as number,
+        1920,
+        1080,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("handles number where string expected for path", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Invalid type"));
+    await expect(
+      decodeFrame(12345 as unknown as string, 1.0, 1920, 1080),
+    ).rejects.toThrow();
+  });
+
+  it("handles boolean where number expected for timeSecs", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Invalid type"));
+    await expect(
+      decodeFrame("/test/video.mp4", true as unknown as number, 1920, 1080),
+    ).rejects.toThrow();
+  });
+});
+
+// ─── decodeFramesStreaming ────────────────────────────────────────────────────
+
+describe("decodeFramesStreaming", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(invoke).mockReset(); // clear queued once-values from previous tests
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("calls decode_frames_streaming with a Channel", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    const onTile = vi.fn();
+
+    await decodeFramesStreaming(
+      "/test/video.mp4",
+      [1.0, 2.0],
+      DensityLevel.Medium,
+      120,
+      68,
+      10,
+      onTile,
+    );
+
+    expect(invoke).toHaveBeenCalledWith(
+      "decode_frames_streaming",
+      expect.objectContaining({
+        videoPath: "/test/video.mp4",
+        timestamps: [1.0, 2.0],
+        density: "medium",
+        width: 120,
+        height: 68,
+        duration: 10,
+      }),
+    );
+    // Channel is passed as onTile argument
+    expect(invoke).toHaveBeenCalledWith(
+      "decode_frames_streaming",
+      expect.objectContaining({
+        onTile: expect.any(Object),
+      }),
+    );
+  });
+
+  it("normalizes file:// URLs before invoking", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await decodeFramesStreaming(
+      "file:///Users/test/clip.mov",
+      [1.0],
+      DensityLevel.Low,
+      80,
+      45,
+      5,
+      vi.fn(),
+    );
+    expect(invoke).toHaveBeenCalledWith(
+      "decode_frames_streaming",
+      expect.objectContaining({
+        videoPath: "/Users/test/clip.mov",
+      }),
+    );
+  });
+
+  it("propagates errors from invoke", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Decoder error"));
+    await expect(
+      decodeFramesStreaming(
+        "/test/video.mp4",
+        [1.0],
+        DensityLevel.Low,
+        80,
+        45,
+        5,
+        vi.fn(),
+      ),
+    ).rejects.toThrow("Decoder error");
+  });
+
+  it("resolves on successful streaming completion", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await expect(
+      decodeFramesStreaming(
+        "/test/video.mp4",
+        [],
+        DensityLevel.Low,
+        80,
+        45,
+        5,
+        vi.fn(),
+      ),
+    ).resolves.toBeUndefined();
+  });
+});
+
+// ─── Native preview bridge ──────────────────────────────────────────────────
+
+describe("native preview bridge", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.clearAllMocks());
+
+  it("requests the complete native render metadata contract", async () => {
+    const metadata = { width: 1920, height: 1080, color: { range: "limited" } };
+    vi.mocked(invoke).mockResolvedValueOnce(metadata);
+
+    const result = await getVideoRenderMetadata("file:///Users/test/clip.mov");
+
+    expect(invoke).toHaveBeenCalledWith("get_video_render_metadata", {
+      path: "/Users/test/clip.mov",
+    });
+    expect(result).toBe(metadata);
+  });
+
+  it("requests one native RGBA source frame", async () => {
+    const frame = new ArrayBuffer(16);
+    vi.mocked(invoke).mockResolvedValueOnce(frame);
+
+    const result = await renderNativePreviewFrame("/test/video.mp4", 2.5);
+
+    expect(invoke).toHaveBeenCalledWith("render_native_preview_frame", {
+      videoPath: "/test/video.mp4",
+      timeSecs: 2.5,
+    });
+    expect(result).toBe(frame);
+  });
+
+  it("requests one native project compositor frame", async () => {
+    const frame = new ArrayBuffer(32);
+    const request = {
+      canvasWidth: 320,
+      canvasHeight: 180,
+      layers: [
+        {
+          color: [1, 0, 0, 1] as [number, number, number, number],
+          x: 0,
+          y: 0,
+          width: 160,
+          height: 90,
+          zIndex: 0,
+        },
+      ],
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(frame);
+
+    const result = await renderNativeProjectFrame(request);
+
+    expect(invoke).toHaveBeenCalledWith("render_native_project_frame", {
+      request,
+    });
+    expect(result).toBe(frame);
+  });
+
+  it("normalizes paths before requesting native video project compositing", async () => {
+    const frame = new ArrayBuffer(32);
+    const request = {
+      canvasWidth: 320,
+      canvasHeight: 180,
+      layers: [
+        {
+          videoPath: "file:///Users/test/clip.mp4",
+          timeSecs: 1.25,
+          x: 0,
+          y: 0,
+          width: 320,
+          height: 180,
+        },
+      ],
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(frame);
+
+    const result = await renderNativeVideoProjectFrame(request);
+
+    expect(invoke).toHaveBeenCalledWith("render_native_video_project_frame", {
+      request: {
+        ...request,
+        layers: [{ ...request.layers[0], videoPath: "/Users/test/clip.mp4" }],
+      },
+    });
+    expect(result).toBe(frame);
+  });
+});
+
+// ─── releaseVideoDecoder ──────────────────────────────────────────────────────
+
+describe("releaseVideoDecoder", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.clearAllMocks());
+
+  it("calls release_video_decoder with normalized path", () => {
+    releaseVideoDecoder("/test/video.mp4");
+    expect(invoke).toHaveBeenCalledWith("release_video_decoder", {
+      videoPath: "/test/video.mp4",
+    });
+  });
+
+  it("normalizes file:// URLs before invoking", () => {
+    releaseVideoDecoder("file:///Users/test/clip.mov");
+    expect(invoke).toHaveBeenCalledWith("release_video_decoder", {
+      videoPath: "/Users/test/clip.mov",
+    });
+  });
+
+  it("is fire-and-forget — does not return a promise", () => {
+    const result = releaseVideoDecoder("/test/video.mp4");
+    expect(result).toBeUndefined();
+  });
+});
+
+// ─── streamTimelineFramesBinary ─────────────────────────────────────────────
+
+describe("streamTimelineFramesBinary", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(invoke).mockReset();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("calls stream_timeline_frames_binary with Channel and normalized path", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    const onFrame = vi.fn();
+
+    await streamTimelineFramesBinary(
+      "/test/video.mp4",
+      [0.5, 1.5],
+      1920,
+      1080,
+      onFrame,
+    );
+
+    expect(invoke).toHaveBeenCalledWith(
+      "stream_timeline_frames_binary",
+      expect.objectContaining({
+        videoPath: "/test/video.mp4",
+        timestamps: [0.5, 1.5],
+        width: 1920,
+        height: 1080,
+        onFrame: expect.any(Object),
+      }),
+    );
+  });
+
+  it("normalizes file:// URLs before invoking", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await streamTimelineFramesBinary(
+      "file:///Users/test/clip.mov",
+      [0.0],
+      1280,
+      720,
+      vi.fn(),
+    );
+
+    expect(invoke).toHaveBeenCalledWith(
+      "stream_timeline_frames_binary",
+      expect.objectContaining({
+        videoPath: "/Users/test/clip.mov",
+      }),
+    );
+  });
+
+  it("propagates error when backend fails", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(
+      new Error("Decoder initialization failed"),
+    );
+    await expect(
+      streamTimelineFramesBinary("/test/video.mp4", [0.5], 1920, 1080, vi.fn()),
+    ).rejects.toThrow("Decoder initialization failed");
+  });
+});
+
+// ─── prewarmDecoders ────────────────────────────────────────────────────────
+
+describe("prewarmDecoders", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(invoke).mockReset();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("returns 0 immediately if path list is empty without invoking Tauri", async () => {
+    const result = await prewarmDecoders([]);
+    expect(result).toBe(0);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("normalizes paths and calls prewarm_decoders", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(2);
+    const result = await prewarmDecoders([
+      "file:///Users/test/a.mp4",
+      "/test/b.mp4",
+    ]);
+
+    expect(invoke).toHaveBeenCalledWith("prewarm_decoders", {
+      videoPaths: ["/Users/test/a.mp4", "/test/b.mp4"],
+    });
+    expect(result).toBe(2);
+  });
+
+  it("gracefully catches errors and returns 0", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Channel closed"));
+    const result = await prewarmDecoders(["/test/video.mp4"]);
+    expect(result).toBe(0);
+  });
+});
+
+// ─── getNativePreviewSurfaceGeometry ────────────────────────────────────────
+
+describe("getNativePreviewSurfaceGeometry", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.clearAllMocks());
+
+  it("calculates physical coordinates relative to innerPosition on all platforms", async () => {
+    mockInnerPosition.mockResolvedValueOnce({ Physical: { x: 200, y: 150 } });
+    const mockElement = {
+      getBoundingClientRect: () => ({
+        left: 40,
+        top: 60,
+        width: 800,
+        height: 450,
+      }),
+    } as unknown as HTMLElement;
+
+    Object.defineProperty(window, "devicePixelRatio", {
+      value: 2,
+      configurable: true,
+    });
+
+    const geometry = await getNativePreviewSurfaceGeometry(mockElement);
+
+    expect(geometry).toEqual({
+      xPhysical: 280, // 200 + 40 * 2
+      yPhysical: 270, // 150 + 60 * 2
+      widthPhysical: 1600, // 800 * 2
+      heightPhysical: 900, // 450 * 2
+      devicePixelRatio: 2,
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("plugin:window|inner_position", {
+      label: "main",
+    });
+  });
+});
