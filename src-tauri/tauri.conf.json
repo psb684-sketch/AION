@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AION",
   "version": "1.5.9",
@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run ensure:sidecars && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run ensure:sidecars && npm run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
