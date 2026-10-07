@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+﻿import { useState, useEffect, useRef, useCallback } from "react";
 import { useEffectsStore } from "../store/effectsStore";
 import { EffectCard } from "@/components/ui/EffectCard";
 import { TextEffectsApi, TEXT_EFFECT_CATEGORIES } from "../api/textEffectsApi";
@@ -61,7 +61,7 @@ export function TextEffectGrid({ searchQuery = "", onAddToTimeline }: TextEffect
       {
         id: effect.id,
         name: effect.name,
-        text: effect.text || "CLYPRA",
+        text: effect.text || "AION",
         presetType: "effect",
         styleId: effect.id,
         styleRevisionId: effect.revisionId ?? effect.revision?.revisionId,
@@ -103,12 +103,12 @@ export function TextEffectGrid({ searchQuery = "", onAddToTimeline }: TextEffect
       const cachedEffect = useEffectsStore.getState().definitions[itemId];
 
       if (downloadedEffects.includes(itemId) && cachedEffect) {
-        // ── Fast path: already downloaded — use cached definition, no network call ──
+        // ?? Fast path: already downloaded ??use cached definition, no network call ??
         applyEffectToTimeline(cachedEffect);
         return;
       }
 
-      // ── Slow path: first download ──
+      // ?? Slow path: first download ??
       startDownload(itemId);
       try {
         const fullEffect = await TextEffectsApi.getFullEffect(
@@ -130,25 +130,25 @@ export function TextEffectGrid({ searchQuery = "", onAddToTimeline }: TextEffect
   };
 
   const handlePreview = async (item: any) => {
-    console.log(`[EffectGrid:Preview] 👁️ Preview requested for: ${item.name} (${item.id})`);
+    console.log(`[EffectGrid:Preview] ?몓截?Preview requested for: ${item.name} (${item.id})`);
 
     const itemId = item.id;
     const isDownloaded = downloadedEffects.includes(itemId);
 
     if (downloadingIds.includes(itemId)) {
-      console.log(`[EffectGrid:Preview] ⏸️ Already downloading: ${item.id}`);
+      console.log(`[EffectGrid:Preview] ?몌툘 Already downloading: ${item.id}`);
       return;
     }
 
     // Set the latest targeted preview ID immediately to track user intent and resolve race conditions
     useUIStore.getState().setPreviewMedia(itemId);
-    console.log(`[EffectGrid:Preview] 🎯 Set preview target: ${itemId}`);
+    console.log(`[EffectGrid:Preview] ?렞 Set preview target: ${itemId}`);
 
     if (!isDownloaded) {
-      console.log(`[EffectGrid:Preview] 📥 Effect not downloaded, starting download: ${itemId}`);
+      console.log(`[EffectGrid:Preview] ?뱿 Effect not downloaded, starting download: ${itemId}`);
       startDownload(itemId);
     } else {
-      console.log(`[EffectGrid:Preview] ✅ Effect already downloaded: ${itemId}`);
+      console.log(`[EffectGrid:Preview] ??Effect already downloaded: ${itemId}`);
     }
 
     try {
@@ -165,34 +165,34 @@ export function TextEffectGrid({ searchQuery = "", onAddToTimeline }: TextEffect
       );
 
       const loadTime = (performance.now() - startTime).toFixed(2);
-      console.log(`[EffectGrid:Preview] ✅ Effect loaded in ${loadTime}ms: ${itemId}`);
+      console.log(`[EffectGrid:Preview] ??Effect loaded in ${loadTime}ms: ${itemId}`);
 
       // Mark as downloaded
       completeDownload(itemId, "effect");
-      console.log(`[EffectGrid:Preview] ✅ Marked as downloaded: ${itemId}`);
+      console.log(`[EffectGrid:Preview] ??Marked as downloaded: ${itemId}`);
 
       // Only project to the preview player if this item is still the active preview target
       if (useUIStore.getState().previewMediaId === itemId) {
-        console.log(`[EffectGrid:Preview] 🎬 Sending to preview player: ${itemId}`);
+        console.log(`[EffectGrid:Preview] ?렗 Sending to preview player: ${itemId}`);
 
-        // Send directly to the main preview player — same as template preview flow
+        // Send directly to the main preview player ??same as template preview flow
         useUIStore.getState().previewTextPreset(fullEffect, "effect");
 
         // Activate transport source context
         const session = getActiveSessionOrNull();
         session?.transportAuthority?.setActiveContext("source");
 
-        console.log(`[EffectGrid:Preview] ✅ Preview active for: ${itemId}`);
+        console.log(`[EffectGrid:Preview] ??Preview active for: ${itemId}`);
       } else {
-        console.log(`[EffectGrid:Preview] ⚠️ Preview cancelled - target changed to: ${useUIStore.getState().previewMediaId}`);
+        console.log(`[EffectGrid:Preview] ?좑툘 Preview cancelled - target changed to: ${useUIStore.getState().previewMediaId}`);
       }
     } catch (e) {
-      console.error(`[EffectGrid:Preview] ❌ Failed to load effect ${itemId}:`, e);
+      console.error(`[EffectGrid:Preview] ??Failed to load effect ${itemId}:`, e);
       cancelDownload(itemId);
 
       // Fallback: still preview with partial data if this item is still the active target
       if (useUIStore.getState().previewMediaId === itemId) {
-        console.log(`[EffectGrid:Preview] 🔄 Fallback preview with partial data: ${itemId}`);
+        console.log(`[EffectGrid:Preview] ?봽 Fallback preview with partial data: ${itemId}`);
         useUIStore.getState().previewTextPreset(item, "effect");
         const session = getActiveSessionOrNull();
         session?.transportAuthority?.setActiveContext("source");
@@ -204,7 +204,7 @@ export function TextEffectGrid({ searchQuery = "", onAddToTimeline }: TextEffect
   const convertToEffectDefinition = (item: any): TextEffectDefinition => {
     return {
       ...item,
-      text: "CLYPRA",
+      text: "AION",
       description: item.description || "",
       tags: item.tags || [],
       font: {
@@ -222,7 +222,7 @@ export function TextEffectGrid({ searchQuery = "", onAddToTimeline }: TextEffect
 
   return (
     <div className="flex flex-col h-full bg-surface/5">
-      {/* ── Category tabs ───────────────────────────────────── */}
+      {/* ?? Category tabs ????????????????????????????????????? */}
       <div className="relative shrink-0 border-b border-border/40 bg-surface/5">
         {/* <div className="absolute left-0 top-0 bottom-0 w-3 bg-linear-to-l to-surface from-transparent pointer-events-none" /> */}
         <div className="flex overflow-x-auto gap-0.5 p-1 whitespace-nowrap" style={{ scrollbarWidth: "none" }}>
@@ -235,7 +235,7 @@ export function TextEffectGrid({ searchQuery = "", onAddToTimeline }: TextEffect
         {/* <div className="absolute right-0 top-0 bottom-0 w-3 bg-linear-to-l from-surface to-transparent pointer-events-none" /> */}
       </div>
 
-      {/* ── Grid body ───────────────────────────────────────── */}
+      {/* ?? Grid body ????????????????????????????????????????? */}
       <div className="flex-1 overflow-y-auto p-1 scrollbar-thin">
         {indexLoading && <GridSkeleton />}
 
@@ -286,3 +286,4 @@ function GridSkeleton() {
     </div>
   );
 }
+

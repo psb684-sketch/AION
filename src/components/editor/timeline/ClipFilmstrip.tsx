@@ -1,10 +1,10 @@
-/**
- * ClipFilmstrip — Phase 3 refactor
+﻿/**
+ * ClipFilmstrip ??Phase 3 refactor
  *
  * Pure canvas consumer. Zero orchestration logic.
  * All extraction, epoch management, and scheduling is handled by:
- *   useFilmstrip()     → requests artifacts via RenderRuntime + transport layer
- *   RasterSurface      → draws ImageBitmaps onto canvas (zero browser resampling)
+ *   useFilmstrip()     ??requests artifacts via RenderRuntime + transport layer
+ *   RasterSurface      ??draws ImageBitmaps onto canvas (zero browser resampling)
  *
  * This component:
  *   - Renders a <canvas> backed by RasterSurface
@@ -144,7 +144,7 @@ export function ClipFilmstripInner({
     isVideoSource && mediaAsset.path
       ? normalizePathForTauriInvoke(mediaAsset.path)
       : "";
-  // PERF (0-A Rank 1): Read clock time imperatively — no React subscription.
+  // PERF (0-A Rank 1): Read clock time imperatively ??no React subscription.
   // playheadTime only hints which tile to prioritize for progressive rendering;
   // re-rendering at 10fps during playback is unnecessary overhead.
   const currentTime = getPlaybackClock().time;
@@ -155,7 +155,7 @@ export function ClipFilmstripInner({
       ? clipLocalPlayheadTime
       : clip.trimIn;
 
-  // ── Filmstrip data (pure projection from RenderEngine) ─────────────────────
+  // ?? Filmstrip data (pure projection from RenderEngine) ?????????????????????
   const { artifacts, spatialTier, epochId } = useFilmstrip({
     clipId: clip.id,
     videoPath,
@@ -252,7 +252,7 @@ export function ClipFilmstripInner({
     committedFilmstripRef.current = null;
   }, [clip.id, videoPath]);
 
-  // ── RasterSurface lifecycle ───────────────────────────────────────────────
+  // ?? RasterSurface lifecycle ???????????????????????????????????????????????
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -268,7 +268,7 @@ export function ClipFilmstripInner({
     };
   }, []); // only on mount/unmount
 
-  // ── Synchronous Backing-Store Synchronization (Bug A Fix) ────────────────
+  // ?? Synchronous Backing-Store Synchronization (Bug A Fix) ????????????????
   // Immediately resize canvas.width/canvas.height in useLayoutEffect before the browser
   // paints, ensuring the physical buffer resolution matches CSS width * DPR.
   // This prevents the browser compositor from bilinearly stretching the old framebuffer.
@@ -346,7 +346,7 @@ export function ClipFilmstripInner({
     runtime?.tileCache,
   ]);
 
-  // ── Epoch Transition & Debounce Gating (Unconditional Escape Timer) ─────
+  // ?? Epoch Transition & Debounce Gating (Unconditional Escape Timer) ?????
   // Start the 120ms debounce threshold timer immediately upon epoch/spatialTier
   // change to ensure a bounded fallback commit even if decode is delayed.
   const [epochDebounceExpired, setEpochDebounceExpired] = useState(false);
@@ -359,7 +359,7 @@ export function ClipFilmstripInner({
     return () => clearTimeout(timer);
   }, [epochId, spatialTier]);
 
-  // ── Draw filmstrip whenever artifacts or layout changes ───────────────────
+  // ?? Draw filmstrip whenever artifacts or layout changes ???????????????????
   useEffect(() => {
     const surface = surfaceRef.current;
     const canvas = canvasRef.current;
@@ -456,7 +456,7 @@ export function ClipFilmstripInner({
     videoPath,
   ]);
 
-  // ── Image tile rendering (still-image clips) ──────────────────────────────
+  // ?? Image tile rendering (still-image clips) ??????????????????????????????
   useEffect(() => {
     if (mediaAsset.type !== "image") return;
 
@@ -482,10 +482,10 @@ export function ClipFilmstripInner({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
       const tileSeparator = getRuntimeClipColor(
-        "--clypra-clip-filmstrip-overlay",
+        "--AION-clip-filmstrip-overlay",
       );
       const overallOverlay = getRuntimeClipColor(
-        "--clypra-clip-filmstrip-overlay-soft",
+        "--AION-clip-filmstrip-overlay-soft",
       );
 
       // Professional NLE: tile count derived from temporal width
@@ -558,9 +558,9 @@ export function ClipFilmstripInner({
     stripHeightPx,
   ]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ?? Render ????????????????????????????????????????????????????????????????
 
-  // Video filmstrip — canvas surface
+  // Video filmstrip ??canvas surface
   if (isVideoSource) {
     const visibleWindow = renderWindow;
 
@@ -593,7 +593,7 @@ export function ClipFilmstripInner({
     );
   }
 
-  // Image asset — tiled canvas rendering (one decoded bitmap, many timeline tiles)
+  // Image asset ??tiled canvas rendering (one decoded bitmap, many timeline tiles)
   if (
     mediaAsset.type === "image" &&
     (mediaAsset.posterFrame || mediaAsset.path)
@@ -630,3 +630,4 @@ export function ClipFilmstripInner({
 // when its own props haven't changed. The clock subscription was removed above, so
 // re-renders now only happen when clip geometry, mediaAsset, or viewport props change.
 export const ClipFilmstrip = React.memo(ClipFilmstripInner);
+

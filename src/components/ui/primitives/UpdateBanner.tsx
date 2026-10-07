@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { Download, X, Sparkles, ArrowRight } from "lucide-react";
 import type { UseAutoUpdaterReturn } from "@/hooks/useAutoUpdater";
 
@@ -8,7 +8,7 @@ interface UpdateBannerProps {
 
 /**
  * A floating, animated banner that appears from the bottom of the screen when
- * a new Clypra release is available on GitHub. Non-blocking — the user can
+ * a new AION release is available on GitHub. Non-blocking ??the user can
  * dismiss or install without interrupting their workflow.
  */
 export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
@@ -67,9 +67,9 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
           gap: "12px",
           padding: "12px 16px",
           borderRadius: "20px",
-          border: "1px solid color-mix(in srgb, var(--clypra-text-primary) 12%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--AION-text-primary) 12%, transparent)",
           background:
-            "linear-gradient(135deg, var(--clypra-surface-floating) 0%, var(--clypra-surface-panel) 100%)",
+            "linear-gradient(135deg, var(--AION-surface-floating) 0%, var(--AION-surface-panel) 100%)",
           backdropFilter: "blur(24px)",
           WebkitBackdropFilter: "blur(24px)",
           boxShadow:
@@ -87,7 +87,7 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
             position: "absolute",
             inset: 0,
             background:
-              "radial-gradient(ellipse at 0% 50%, color-mix(in srgb, var(--clypra-interaction-focus) 7%, transparent) 0%, transparent 70%)",
+              "radial-gradient(ellipse at 0% 50%, color-mix(in srgb, var(--AION-interaction-focus) 7%, transparent) 0%, transparent 70%)",
             pointerEvents: "none",
           }}
         />
@@ -103,7 +103,7 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
               height: "2px",
               width: `${downloadProgress}%`,
               background:
-                "linear-gradient(90deg, var(--clypra-interaction-focus), var(--clypra-clip-effect-bg))",
+                "linear-gradient(90deg, var(--AION-interaction-focus), var(--AION-clip-effect-bg))",
               transition: "width 0.3s ease",
               borderRadius: "0 2px 0 0",
             }}
@@ -118,8 +118,8 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
             height: "36px",
             borderRadius: "12px",
             background:
-              "linear-gradient(135deg, color-mix(in srgb, var(--clypra-interaction-focus) 15%, transparent) 0%, color-mix(in srgb, var(--clypra-clip-effect-bg) 15%, transparent) 100%)",
-            border: "1px solid color-mix(in srgb, var(--clypra-interaction-focus) 20%, transparent)",
+              "linear-gradient(135deg, color-mix(in srgb, var(--AION-interaction-focus) 15%, transparent) 0%, color-mix(in srgb, var(--AION-clip-effect-bg) 15%, transparent) 100%)",
+            border: "1px solid color-mix(in srgb, var(--AION-interaction-focus) 20%, transparent)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -128,11 +128,11 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
         >
           {isDownloading || isApplying ? (
             <Download
-              style={{ width: "16px", height: "16px", color: "var(--clypra-interaction-focus)" }}
+              style={{ width: "16px", height: "16px", color: "var(--AION-interaction-focus)" }}
             />
           ) : (
             <Sparkles
-              style={{ width: "16px", height: "16px", color: "var(--clypra-interaction-focus)" }}
+              style={{ width: "16px", height: "16px", color: "var(--AION-interaction-focus)" }}
             />
           )}
         </div>
@@ -144,23 +144,23 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
               margin: 0,
               fontSize: "12px",
               fontWeight: 600,
-              color: "var(--clypra-text-primary)",
+              color: "var(--AION-text-primary)",
               lineHeight: 1.3,
             }}
           >
             {isDownloading
-              ? `Downloading update… ${downloadProgress}%`
+              ? `Downloading update??${downloadProgress}%`
               : isDownloaded
-                ? `Clypra ${updateInfo?.version} is ready to apply`
+                ? `AION ${updateInfo?.version} is ready to apply`
                 : isApplying
-                  ? "Preparing Clypra for restart…"
-              : `Clypra ${updateInfo?.version} is available`}
+                  ? "Preparing AION for restart??
+              : `AION ${updateInfo?.version} is available`}
           </p>
           <p
             style={{
               margin: "2px 0 0",
               fontSize: "11px",
-              color: "var(--clypra-text-secondary)",
+              color: "var(--AION-text-secondary)",
               lineHeight: 1.3,
             }}
           >
@@ -178,7 +178,7 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
               style={{
                 margin: "3px 0 0",
                 fontSize: "10px",
-                color: "var(--clypra-status-error)",
+                color: "var(--AION-status-error)",
               }}
             >
               {error}
@@ -205,9 +205,9 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
                 cursor: "pointer",
                 border: "none",
                 background:
-                  "linear-gradient(135deg, var(--clypra-interaction-focus) 0%, var(--clypra-clip-effect-bg) 100%)",
-                color: "var(--clypra-surface-app)",
-                boxShadow: "0 2px 12px color-mix(in srgb, var(--clypra-interaction-focus) 30%, transparent)",
+                  "linear-gradient(135deg, var(--AION-interaction-focus) 0%, var(--AION-clip-effect-bg) 100%)",
+                color: "var(--AION-surface-app)",
+                boxShadow: "0 2px 12px color-mix(in srgb, var(--AION-interaction-focus) 30%, transparent)",
                 transition: "filter 0.15s ease, transform 0.1s ease",
                 whiteSpace: "nowrap",
               }}
@@ -246,8 +246,8 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
                   fontWeight: 600,
                   cursor: "pointer",
                   border: "none",
-                  background: "linear-gradient(135deg, var(--clypra-interaction-focus) 0%, var(--clypra-clip-effect-bg) 100%)",
-                  color: "var(--clypra-surface-app)",
+                  background: "linear-gradient(135deg, var(--AION-interaction-focus) 0%, var(--AION-clip-effect-bg) 100%)",
+                  color: "var(--AION-surface-app)",
                   whiteSpace: "nowrap",
                 }}
               >
@@ -267,9 +267,9 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
                   fontSize: "11px",
                   fontWeight: 600,
                   cursor: "pointer",
-                  border: "1px solid color-mix(in srgb, var(--clypra-text-primary) 8%, transparent)",
-                  background: "color-mix(in srgb, var(--clypra-text-primary) 4%, transparent)",
-                  color: "var(--clypra-text-secondary)",
+                  border: "1px solid color-mix(in srgb, var(--AION-text-primary) 8%, transparent)",
+                  background: "color-mix(in srgb, var(--AION-text-primary) 4%, transparent)",
+                  color: "var(--AION-text-secondary)",
                 }}
               >
                 Later
@@ -289,21 +289,21 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
                 borderRadius: "10px",
                 fontSize: "11px",
                 cursor: "pointer",
-                border: "1px solid color-mix(in srgb, var(--clypra-text-primary) 8%, transparent)",
-                background: "color-mix(in srgb, var(--clypra-text-primary) 4%, transparent)",
-                color: "var(--clypra-text-secondary)",
+                border: "1px solid color-mix(in srgb, var(--AION-text-primary) 8%, transparent)",
+                background: "color-mix(in srgb, var(--AION-text-primary) 4%, transparent)",
+                color: "var(--AION-text-secondary)",
                 transition: "background 0.15s ease, color 0.15s ease",
                 padding: 0,
               }}
               onMouseEnter={(e) => {
                 const btn = e.currentTarget as HTMLButtonElement;
-                btn.style.background = "color-mix(in srgb, var(--clypra-text-primary) 8%, transparent)";
-                btn.style.color = "var(--clypra-text-primary)";
+                btn.style.background = "color-mix(in srgb, var(--AION-text-primary) 8%, transparent)";
+                btn.style.color = "var(--AION-text-primary)";
               }}
               onMouseLeave={(e) => {
                 const btn = e.currentTarget as HTMLButtonElement;
-                btn.style.background = "color-mix(in srgb, var(--clypra-text-primary) 4%, transparent)";
-                btn.style.color = "var(--clypra-text-secondary)";
+                btn.style.background = "color-mix(in srgb, var(--AION-text-primary) 4%, transparent)";
+                btn.style.color = "var(--AION-text-secondary)";
               }}
             >
               <X style={{ width: "13px", height: "13px" }} />
@@ -320,8 +320,8 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
               width: "18px",
               height: "18px",
               borderRadius: "50%",
-              border: "2px solid color-mix(in srgb, var(--clypra-interaction-focus) 20%, transparent)",
-              borderTopColor: "var(--clypra-interaction-focus)",
+              border: "2px solid color-mix(in srgb, var(--AION-interaction-focus) 20%, transparent)",
+              borderTopColor: "var(--AION-interaction-focus)",
               animation: "spin 0.8s linear infinite",
             }}
           />
@@ -336,3 +336,4 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({ updater }) => {
     </div>
   );
 };
+

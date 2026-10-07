@@ -1,11 +1,11 @@
-import React, { useRef, useEffect, useCallback, useState } from "react";
+﻿import React, { useRef, useEffect, useCallback, useState } from "react";
 import { TemplatePreviewPlayer } from "@/features/text-templates";
 import { Minus, Plus, RotateCcw } from "lucide-react";
-import { renderTextEffectToCanvas, textEffectConfigToScene, type TextEffectConfig, _buildConfig } from "@clypra-studio/engine";
+import { renderTextEffectToCanvas, textEffectConfigToScene, type TextEffectConfig, _buildConfig } from "@AION-studio/engine";
 import { getFontLoader } from "@/core/fonts/FontLoader";
 import { traceTextRenderGeometry, traceTextRenderScene } from "@/core/render/textRenderTrace";
 
-// Effects are designed for this banner canvas size (800×200).
+// Effects are designed for this banner canvas size (800횞200).
 const PREVIEW_CANVAS_W = 800;
 const PREVIEW_CANVAS_H = 200;
 
@@ -46,12 +46,12 @@ export const resolveTextSourcePreviewConfig = (preset: any): TextEffectConfig =>
   // Built-in presets are nested TextEffectDefinition structures, while API presets can be flat TextEffectConfig structures.
   // Normalize them into the exact config shape consumed by renderTextEffectCore.
   const isNested = !!preset?.font;
-  const config = isNested ? _buildConfig(preset, preset.text || "CLYPRA", preset.fontSize || 100, PREVIEW_CANVAS_W, PREVIEW_CANVAS_H) : preset;
+  const config = isNested ? _buildConfig(preset, preset.text || "AION", preset.fontSize || 100, PREVIEW_CANVAS_W, PREVIEW_CANVAS_H) : preset;
   const sceneText = preset?.scene?.text;
 
   return {
     ...config,
-    text: config.text || "CLYPRA",
+    text: config.text || "AION",
     effectName: config.effectName || config.name || preset?.name || "Effect",
     fontFamily: config.fontFamily || sceneText?.fontFamily || preset?.font?.family || preset?.fontFamily || "Inter Variable",
     fontSize: config.fontSize ?? sceneText?.fontSize ?? preset?.fontSize ?? 100,
@@ -81,7 +81,7 @@ export const TextSourcePreview: React.FC<TextSourcePreviewProps> = ({ preset }) 
       node.style.height = `${PREVIEW_CANVAS_H}px`;
 
       // Set actual canvas buffer size accounting for DPI (but keep at 1:1 for text effects)
-      // Text effects are designed at 800×200, so we render at that exact size
+      // Text effects are designed at 800횞200, so we render at that exact size
       node.width = PREVIEW_CANVAS_W;
       node.height = PREVIEW_CANVAS_H;
 
@@ -207,7 +207,7 @@ export const TextSourcePreview: React.FC<TextSourcePreviewProps> = ({ preset }) 
           });
         }
       } catch (error) {
-        console.error("[TextSourcePreview] ❌ Error:", error);
+        console.error("[TextSourcePreview] ??Error:", error);
         ctx.fillStyle = "#ff0000";
         ctx.font = "14px Arial";
         ctx.textAlign = "center";
@@ -256,3 +256,4 @@ export const TextSourcePreview: React.FC<TextSourcePreviewProps> = ({ preset }) 
     </div>
   );
 };
+

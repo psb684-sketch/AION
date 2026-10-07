@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 
 interface ThumbnailFeedPreviewProps {
   previewDataUrl: string | null;
@@ -56,7 +56,7 @@ export const ThumbnailFeedPreview: React.FC<ThumbnailFeedPreviewProps> = ({
                   {videoTitle}
                 </span>
                 <span className="text-[10px] text-neutral-400 leading-tight mt-0.5">
-                  Clypra Studio • 142K views
+                  AION Studio ??142K views
                 </span>
               </div>
             </div>
@@ -119,3 +119,4 @@ export const ThumbnailFeedPreview: React.FC<ThumbnailFeedPreviewProps> = ({
     </div>
   );
 };
+

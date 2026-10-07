@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+﻿import { useState, useCallback, useEffect } from "react";
 import { Download, Star, Plus } from "lucide-react";
 import { renderTextEffect } from "@/features/text-effects/renderer";
 import type { TextEffectDefinition } from "@/features/text-effects/types/types";
@@ -30,18 +30,18 @@ export const EffectCard: React.FC<EffectCardProps> = ({
   }, []);
 
   const isTestOrCustom = !effect.id || effect.id.startsWith("effect-") || effect.id.startsWith("test-") || effect.id.startsWith("custom-") || effect.id.startsWith("user-");
-  const thumbnailUrl = effect.thumbnailUrl || effect.thumbnail || (isTestOrCustom ? "" : `https://raw.githubusercontent.com/AIEraDev/clypra-api/main/data/thumbnails/${effect.id}.png`);
+  const thumbnailUrl = effect.thumbnailUrl || effect.thumbnail || (isTestOrCustom ? "" : `https://raw.githubusercontent.com/AIEraDev/AION-api/main/data/thumbnails/${effect.id}.png`);
 
   useEffect(() => {
     // Only run canvas render if we don't have a static thumbnail url to draw
     if (canvas && !thumbnailUrl) {
       canvas.width = 250;
       canvas.height = 120;
-      renderTextEffect(canvas, effect.text || "CLYPRA", effect, 34);
+      renderTextEffect(canvas, effect.text || "AION", effect, 34);
 
       if (typeof document !== "undefined" && document.fonts) {
         document.fonts.ready.then(() => {
-          renderTextEffect(canvas, effect.text || "CLYPRA", effect, 34);
+          renderTextEffect(canvas, effect.text || "AION", effect, 34);
         });
       }
     }
@@ -112,3 +112,4 @@ export const EffectCard: React.FC<EffectCardProps> = ({
     </div>
   );
 };
+

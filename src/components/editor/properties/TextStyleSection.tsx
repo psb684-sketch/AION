@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import {
   Type,
   AlignLeft,
@@ -28,8 +28,8 @@ import { useHistoryStore } from "@/store/historyStore";
 import { useEffectsStore } from "@/features/text-effects/store/effectsStore";
 import { EffectStylePanel } from "./EffectStylePanel";
 import { TemplateLayerEditor } from "./TemplateLayerEditor";
-import { ClypraColorPicker } from "@clypra/ui-color-picker";
-import { resolveTextTemplateArtifact } from "@clypra-studio/engine";
+import { ClypraColorPicker } from "@AION/ui-color-picker";
+import { resolveTextTemplateArtifact } from "@AION-studio/engine";
 import { isTauriRuntime } from "@/lib/platform/tauri";
 import {
   getBundledNativeFontIds,
@@ -217,7 +217,7 @@ const TextContentEditor = React.memo<TextContentEditorProps>(
           onChange(nextValue);
         }}
         rows={3}
-        placeholder="CLYPRA"
+        placeholder="AION"
         aria-label={`${mode === "effect" ? "Effect" : "Plain"} text content`}
         className="w-full bg-surface-raised border border-border/60 rounded-lg p-2.5 text-xs text-text-primary outline-none focus:border-accent focus:ring-1 focus:ring-accent/20 resize-none selectable transition-colors"
       />
@@ -564,7 +564,7 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({
     textClip.lineHeight ?? effectFont?.lineHeight ?? 1.2;
 
   /**
-   * Stroke/shadow/background are not exposed in the effect-mode UI — those
+   * Stroke/shadow/background are not exposed in the effect-mode UI ??those
    * controls are hidden so users cannot accidentally create a conflicting state.
    * The EffectStylePanel isModified badge is kept for future use but is always
    * false now that no geometry-override controls are shown in effect mode.
@@ -587,7 +587,7 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({
    *
    * Font family, size, weight, style, color, letter-spacing, and line-height
    * are per-clip overrides that the effect renderer applies ON TOP of the
-   * effect scene — changing them keeps the visual effect intact.
+   * effect scene ??changing them keeps the visual effect intact.
    *
    * Only stroke, shadow, and background genuinely conflict with effect
    * ownership (the effect defines its own geometry for those). Touching any
@@ -888,7 +888,7 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({
             onChange={(v) => handleCustomStyleUpdate("fontSize", v)}
           />
 
-          {/* Font Weight — hidden for effects (effect design defines its own weight) */}
+          {/* Font Weight ??hidden for effects (effect design defines its own weight) */}
           {mode !== "effect" && (
             <div>
               <div className="flex justify-between items-center text-[10px] text-text-muted mb-1 select-none">
@@ -916,7 +916,7 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({
 
           {/* Font Style + Alignment */}
           <div className="grid grid-cols-2 gap-3">
-            {/* Italic toggle — hidden for effects (effect design defines its own style) */}
+            {/* Italic toggle ??hidden for effects (effect design defines its own style) */}
             {mode !== "effect" ? (
               <div className="space-y-1">
                 <label className="text-[9px] text-text-muted block select-none">
@@ -1015,7 +1015,7 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({
             onChange={(v) => handleCustomStyleUpdate("lineHeight", v)}
           />
 
-          {/* Text Color, Stroke, Shadow, Background — hidden for effects and templates */}
+          {/* Text Color, Stroke, Shadow, Background ??hidden for effects and templates */}
           {mode === "plain" && (
             <>
               <div className="space-y-2 pt-3 border-t border-border/30">
@@ -1418,3 +1418,4 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({
     </div>
   );
 };
+

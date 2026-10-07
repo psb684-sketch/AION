@@ -1,7 +1,7 @@
-/**
+﻿/**
  * KaraokeCaptions
  *
- * Animated word-by-word karaoke caption overlay synchronized with Clypra's
+ * Animated word-by-word karaoke caption overlay synchronized with AION's
  * PlaybackClock. Uses a localized RAF loop that reads clock.time imperatively
  * to avoid React render storms, only triggering state updates when the active
  * sentence changes.
@@ -119,5 +119,6 @@ export const KaraokeCaptions: React.FC = () => {
     </div>
   );
 };
+
 
 

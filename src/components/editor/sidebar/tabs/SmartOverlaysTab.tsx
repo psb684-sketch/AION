@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+﻿import React, { useState, useEffect, useMemo } from "react";
 import { Sparkles, Plus, Wand2, Sliders, TrendingUp, Quote, Columns, Code, List, Clock, Share2, User, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useTimelineStore } from "@/store/timelineStore";
@@ -52,7 +52,7 @@ export const SmartOverlaysTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
       id: item.id,
       name: item.name,
       category: item.clipData.overlayType,
-      description: "Custom overlay cached from Clypra Studio",
+      description: "Custom overlay cached from AION Studio",
       defaultContent: item.clipData.content,
       style: item.clipData.style,
       isCustom: true
@@ -73,7 +73,7 @@ export const SmartOverlaysTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
     }
     if (!preset) return;
 
-    // ensureTrackForType respects reuseStrategy: "shared" — all overlay clips share one track.
+    // ensureTrackForType respects reuseStrategy: "shared" ??all overlay clips share one track.
     const trackId = useTimelineStore.getState().ensureTrackForType("animated-overlay");
 
     const newClip: SmartOverlayClip = {
@@ -153,7 +153,7 @@ export const SmartOverlaysTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
           </a>
         </div>
         <p className="text-xs text-text-muted">
-          AI speech-intent graphic overlays &amp; disk-cached templates designed in Clypra Studio.
+          AI speech-intent graphic overlays &amp; disk-cached templates designed in AION Studio.
         </p>
       </div>
 
@@ -170,7 +170,7 @@ export const SmartOverlaysTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
         >
           {isGenerating ? (
             <>
-              <span className="animate-spin text-xs">🌀</span> Detecting Intents...
+              <span className="animate-spin text-xs">??</span> Detecting Intents...
             </>
           ) : (
             <>
@@ -390,3 +390,4 @@ export const SmartOverlaysTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
     </div>
   );
 };
+

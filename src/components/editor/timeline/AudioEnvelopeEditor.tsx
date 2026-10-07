@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+﻿import React, { useState, useRef } from "react";
 import { useTimelineStore } from "@/store/timelineStore";
 import { useHistoryStore } from "@/store/historyStore";
 import { TransformClipCommand } from "@/core/history/commands/TransformCommand";
@@ -37,7 +37,7 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
   const fadeDragTargetRef = useRef<HTMLElement | null>(null);
   const fadeValueRef = useRef<number | null>(null);
   // PERF (0-B extended / 8-B): RAF coalescing refs.
-  // onPointerMove fires at raw device polling rate (120–240Hz). We stash the
+  // onPointerMove fires at raw device polling rate (120??40Hz). We stash the
   // latest event and process it in a single RAF callback per display frame.
   const envelopeRafRef = useRef<number | null>(null);
   const pendingEnvelopeMoveRef =
@@ -91,7 +91,7 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
   // the knob overlap that row.
   const fadeMarkerYPercent = 6;
 
-  // ── Volume drag ───────────────────────────────────────────────────────────
+  // ?? Volume drag ???????????????????????????????????????????????????????????
 
   const handleVolumeDragStart = (e: React.PointerEvent<HTMLElement>) => {
     e.stopPropagation();
@@ -162,14 +162,14 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
     const nextFade = Math.max(0, Math.min(maxAllowed, rawFade));
     const field = drag.type;
 
-    // PERF (0-B extended): Skip epoch during drag preview — finishFadeDrag
+    // PERF (0-B extended): Skip epoch during drag preview ??finishFadeDrag
     // commits a TransformClipCommand which triggers the real epoch increment.
     updateClip(clip.id, {
       [field]: nextFade,
       _skipEpochIncrement: true,
     } as Parameters<typeof updateClip>[1]);
     fadeValueRef.current = nextFade;
-    // Don't call setDragValue here — RAF callback flushes to React state at ≤60fps
+    // Don't call setDragValue here ??RAF callback flushes to React state at ??0fps
     return true;
   };
 
@@ -215,7 +215,7 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
 
   // PERF (0-B extended / 8-B): Real work is done here, called from the RAF
   // callback at most once per display frame (~60fps) rather than at raw pointer
-  // polling rate (120–240Hz). updateClip and setDragValue are called at most once
+  // polling rate (120??40Hz). updateClip and setDragValue are called at most once
   // per frame instead of on every raw event.
   const applyEnvelopeMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (updateFadeFromPointer(e)) {
@@ -234,7 +234,7 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
       0,
       Math.min(1.0, dragStartRef.current.initialVolume + deltaVol),
     );
-    // PERF (0-B extended): Skip epoch during drag preview — finishVolumeDrag
+    // PERF (0-B extended): Skip epoch during drag preview ??finishVolumeDrag
     // commits a TransformClipCommand which triggers the real epoch increment.
     updateClip(clip.id, {
       volume: nextVol,
@@ -327,7 +327,7 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
     }
   };
 
-  // ── Keyframes ─────────────────────────────────────────────────────────────
+  // ?? Keyframes ?????????????????????????????????????????????????????????????
 
   const removeAudioKeyframe = useTimelineStore((s) => s.removeAudioKeyframe);
   const keyframes = clip.volumeKeyframes || [];
@@ -344,7 +344,7 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
     };
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ?? Render ????????????????????????????????????????????????????????????????
 
   return (
     <div
@@ -369,12 +369,12 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
             <>
               <path
                 d={`M 0 0 L ${fadeInPercent} 0 L ${fadeInPercent} ${fadeMarkerYPercent} C ${fadeInPercent * 0.55} 12 ${fadeInPercent * 0.18} 72 0 100 Z`}
-                fill="var(--clypra-clip-envelope-fill)"
+                fill="var(--AION-clip-envelope-fill)"
               />
               <path
                 d={`M 0 100 C ${fadeInPercent * 0.18} 72 ${fadeInPercent * 0.55} 12 ${fadeInPercent} ${fadeMarkerYPercent}`}
                 fill="none"
-                stroke="var(--clypra-clip-envelope-line)"
+                stroke="var(--AION-clip-envelope-line)"
                 strokeWidth="0.9"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -386,12 +386,12 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
             <>
               <path
                 d={`M ${fadeOutPercent} 0 L 100 0 L 100 100 C ${fadeOutPercent + (100 - fadeOutPercent) * 0.82} 72 ${fadeOutPercent + (100 - fadeOutPercent) * 0.45} 12 ${fadeOutPercent} ${fadeMarkerYPercent} Z`}
-                fill="var(--clypra-clip-envelope-fill)"
+                fill="var(--AION-clip-envelope-fill)"
               />
               <path
                 d={`M ${fadeOutPercent} ${fadeMarkerYPercent} C ${fadeOutPercent + (100 - fadeOutPercent) * 0.45} 12 ${fadeOutPercent + (100 - fadeOutPercent) * 0.82} 72 100 100`}
                 fill="none"
-                stroke="var(--clypra-clip-envelope-line)"
+                stroke="var(--AION-clip-envelope-line)"
                 strokeWidth="0.9"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -416,16 +416,16 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
             touchAction: "none",
           }}
           onPointerDown={(event) => handleFadeDragStart(event, "fadeIn")}
-          title={`Fade in: ${displayFadeIn.toFixed(2)}s — drag right to set`}
+          title={`Fade in: ${displayFadeIn.toFixed(2)}s ??drag right to set`}
         >
           <span
             aria-hidden="true"
             className="pointer-events-none absolute left-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
             style={{
               top: `${fadeMarkerYPercent}%`,
-              backgroundColor: "var(--clypra-clip-control-bg)",
-              borderColor: "var(--clypra-clip-control-border)",
-              boxShadow: "var(--clypra-clip-control-shadow)",
+              backgroundColor: "var(--AION-clip-control-bg)",
+              borderColor: "var(--AION-clip-control-border)",
+              boxShadow: "var(--AION-clip-control-shadow)",
             }}
           />
         </button>
@@ -441,16 +441,16 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
             touchAction: "none",
           }}
           onPointerDown={(event) => handleFadeDragStart(event, "fadeOut")}
-          title={`Fade out: ${displayFadeOut.toFixed(2)}s — drag left to set`}
+          title={`Fade out: ${displayFadeOut.toFixed(2)}s ??drag left to set`}
         >
           <span
             aria-hidden="true"
             className="pointer-events-none absolute left-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
             style={{
               top: `${fadeMarkerYPercent}%`,
-              backgroundColor: "var(--clypra-clip-control-bg)",
-              borderColor: "var(--clypra-clip-control-border)",
-              boxShadow: "var(--clypra-clip-control-shadow)",
+              backgroundColor: "var(--AION-clip-control-bg)",
+              borderColor: "var(--AION-clip-control-border)",
+              boxShadow: "var(--AION-clip-control-shadow)",
             }}
           />
         </button>
@@ -471,9 +471,9 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
                 left: `${kfX}px`,
                 top: `${kfYPercent}%`,
                 transform: "translate(-50%, -50%) rotate(45deg)",
-                backgroundColor: "var(--clypra-clip-keyframe-bg)",
-                borderColor: "var(--clypra-clip-keyframe-border)",
-                boxShadow: "var(--clypra-clip-keyframe-shadow)",
+                backgroundColor: "var(--AION-clip-keyframe-bg)",
+                borderColor: "var(--AION-clip-keyframe-border)",
+                boxShadow: "var(--AION-clip-keyframe-shadow)",
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -498,13 +498,13 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
           style={{ top: `${volumeYPercent}%`, touchAction: "none" }}
           onPointerDown={handleVolumeDragStart}
           onDoubleClick={handleVolumeDoubleClick}
-          title={`Volume: ${Math.round(displayVolume * 100)}% — drag up/down; double-click to reset`}
+          title={`Volume: ${Math.round(displayVolume * 100)}% ??drag up/down; double-click to reset`}
         >
           <div
             className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 rounded-full"
             style={{
-              backgroundColor: "var(--clypra-clip-volume-line)",
-              boxShadow: "var(--clypra-clip-volume-shadow)",
+              backgroundColor: "var(--AION-clip-volume-line)",
+              boxShadow: "var(--AION-clip-volume-shadow)",
             }}
           />
         </div>
@@ -517,10 +517,10 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
           style={{
             left: dragPoint.x,
             top: dragPoint.y,
-            backgroundColor: "var(--clypra-clip-tooltip-bg)",
-            borderColor: "var(--clypra-clip-tooltip-border)",
-            color: "var(--clypra-clip-tooltip-text)",
-            boxShadow: "var(--clypra-clip-control-shadow)",
+            backgroundColor: "var(--AION-clip-tooltip-bg)",
+            borderColor: "var(--AION-clip-tooltip-border)",
+            color: "var(--AION-clip-tooltip-text)",
+            boxShadow: "var(--AION-clip-control-shadow)",
           }}
         >
           Vol {Math.round(dragValue * 100)}%
@@ -529,3 +529,4 @@ export const AudioEnvelopeEditor: React.FC<AudioEnvelopeEditorProps> = ({
     </div>
   );
 };
+

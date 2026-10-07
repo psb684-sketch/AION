@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Transform Overlay
  *
  * Renders transform controls (border + handles) for selected clips in the preview.
@@ -8,7 +8,7 @@
  * - We subtract the overlay's bounding rect to get overlay-local coordinates.
  * - Then convert to canvas space via screenToCanvas (which accounts for viewport zoom/pan).
  * - Transform calculations operate exclusively in canvas space.
- * - The overlay div already occupies displayWidth × displayHeight, so displayOffset
+ * - The overlay div already occupies displayWidth 횞 displayHeight, so displayOffset
  *   relative to the overlay itself is (0, 0).
  */
 
@@ -50,7 +50,7 @@ import type {
 import { ContextMenu } from "@/components/ui/ContextMenu";
 import { useProjectStore } from "@/store/projectStore";
 import { Maximize2, Minimize2, RotateCcw } from "lucide-react";
-import { resolveConform, resolveTextTemplateArtifact } from "@clypra-studio/engine";
+import { resolveConform, resolveTextTemplateArtifact } from "@AION-studio/engine";
 import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
 import { compareCompositorClips } from "@/core/compositor/ordering";
 import { calculateOptimalTemplateLayout } from "@/core/render/templateScale";
@@ -232,11 +232,11 @@ function mouseToCanvas(
   canvasHeight: number,
   scale: number,
 ): { x: number; y: number } {
-  // Step 1: Screen → overlay-local (subtract overlay's screen position)
+  // Step 1: Screen ??overlay-local (subtract overlay's screen position)
   const localX = clientX - overlayRect.left;
   const localY = clientY - overlayRect.top;
 
-  // Step 2: Overlay-local → canvas (the overlay sits at displayOffset=(0,0)
+  // Step 2: Overlay-local ??canvas (the overlay sits at displayOffset=(0,0)
   // relative to itself, so pass zero offset)
   return screenToCanvas(
     localX,
@@ -627,14 +627,13 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({
     index: -1,
   });
   const dragCursorRef = useRef<string | null>(null);
-  /** Start angle (radians) for rotation drag — prevents initial snap */
+  /** Start angle (radians) for rotation drag ??prevents initial snap */
   const startAngleRef = useRef<number | undefined>(undefined);
-  /** Start font size for text clips — supports proportional dynamic scaling */
+  /** Start font size for text clips ??supports proportional dynamic scaling */
   const startFontSizeRef = useRef<number | undefined>(undefined);
   // Refs that let applyMouseMove read the latest clips and currentTime without
   // capturing them as useCallback deps. Without these, any clip update or
-  // playback-clock tick during an active drag would recreate applyMouseMove →
-  // recreate transformFrameQueue → dispose the live queue → drop the pending RAF.
+  // playback-clock tick during an active drag would recreate applyMouseMove ??  // recreate transformFrameQueue ??dispose the live queue ??drop the pending RAF.
   const clipsRef = useRef(clips);
   clipsRef.current = clips;
   const currentTimeRef = useRef(currentTime);
@@ -1550,7 +1549,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({
       canvasWidth,
       canvasHeight,
       transformController,
-      // clips and currentTime are intentionally omitted — they are read via
+      // clips and currentTime are intentionally omitted ??they are read via
       // clipsRef / currentTimeRef inside the callback to avoid recreating
       // transformFrameQueue (and cancelling its pending RAF) on every clip
       // update or playback-clock tick during an active drag.
@@ -2349,7 +2348,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({
             className="w-11 h-6 flex justify-center items-center rounded-sm text-sm font-semibold bg-accent/60 text-text-primary"
             style={{ backdropFilter: "blur(8px)" }}
           >
-            {Math.round(rotation)}°
+            {Math.round(rotation)}째
           </div>
         </div>
       )}
@@ -2400,7 +2399,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({
 interface HandleProps {
   position: TransformHandle;
   onMouseDown: (e: React.MouseEvent) => void;
-  /** Current display scale — used to keep rotation handle at a constant visual distance */
+  /** Current display scale ??used to keep rotation handle at a constant visual distance */
   scale?: number;
   left: number;
   top: number;
@@ -2578,3 +2577,4 @@ const Handle: React.FC<HandleProps> = ({
 
 // Memoize to prevent unnecessary re-renders
 export const TransformOverlayMemoized = React.memo(TransformOverlay);
+

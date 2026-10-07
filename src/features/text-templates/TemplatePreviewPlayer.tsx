@@ -1,8 +1,8 @@
-import React, {
+﻿import React, {
   useEffect, useRef, useImperativeHandle,
   forwardRef, useState, useMemo
 } from 'react';
-import { renderTextTemplateToCanvas, resolveTextTemplateArtifact } from '@clypra-studio/engine';
+import { renderTextTemplateToCanvas, resolveTextTemplateArtifact } from '@AION-studio/engine';
 import { getApiBaseUrl } from '@/lib/api';
 import { getFontLoader } from '@/core/fonts/FontLoader';
 import { resolveCanonicalFamily } from '@/core/fonts/fontRegistry';
@@ -229,7 +229,7 @@ function computeTemplateContentBounds(
   if (Array.isArray(nodes) && nodes.length > 0) {
     for (const node of nodes) {
       if (node.type === "text") {
-        const text = String(node.text ?? node.content ?? "CLYPRA");
+        const text = String(node.text ?? node.content ?? "AION");
         const style = node.style || {};
         const fontSize = typeof style.fontSize === "number" && Number.isFinite(style.fontSize) ? style.fontSize : 48;
         const lineHeight = typeof style.lineHeight === "number" && Number.isFinite(style.lineHeight) ? style.lineHeight : 1.2;
@@ -287,7 +287,7 @@ function computeTemplateContentBounds(
   if (boxes.length === 0 && Array.isArray(layers) && layers.length > 0) {
     for (const layer of layers) {
       if (layer.kind === "text") {
-        const text = String(layer.content ?? layer.text ?? "CLYPRA");
+        const text = String(layer.content ?? layer.text ?? "AION");
         const fontSize = typeof layer.fontSize === "number" && Number.isFinite(layer.fontSize) ? layer.fontSize : 48;
         const lineHeight = typeof layer.lineHeight === "number" && Number.isFinite(layer.lineHeight) ? layer.lineHeight : 1.2;
         const letterSpacing = typeof layer.letterSpacing === "number" && Number.isFinite(layer.letterSpacing) ? layer.letterSpacing : 0;
@@ -569,4 +569,5 @@ function computeTemplateContentBounds(
 );
 
 TemplatePreviewPlayer.displayName = 'TemplatePreviewPlayer';
+
 

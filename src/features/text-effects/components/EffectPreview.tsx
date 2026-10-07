@@ -1,4 +1,4 @@
-// src/features/text-effects/components/EffectPreview.tsx
+﻿// src/features/text-effects/components/EffectPreview.tsx
 import React, { useRef, useState } from "react";
 import { useEffectsStore } from "../store/effectsStore";
 import { useEffectCanvas } from "../hooks/useEffectCanvas";
@@ -12,7 +12,7 @@ interface EffectPreviewProps {
 export function EffectPreview({ onApply, onCancel }: EffectPreviewProps) {
   const { selectedEffect, clearSelected } = useEffectsStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [userText, setUserText] = useState("CLYPRA");
+  const [userText, setUserText] = useState("AION");
 
   useEffectCanvas(canvasRef, userText);
 
@@ -32,18 +32,18 @@ export function EffectPreview({ onApply, onCancel }: EffectPreviewProps) {
 
   return (
     <div className="flex flex-col gap-4 p-4 bg-surface-raised/40 border border-border/50 rounded-xl max-w-md mx-auto select-none">
-      {/* ── Canvas preview ─────────────────────────────────── */}
+      {/* ?? Canvas preview ??????????????????????????????????? */}
       <div className="relative rounded-2xl overflow-hidden bg-black/60 aspect-3/1 border border-white/10 flex items-center justify-center">
         <canvas ref={canvasRef} width={600} height={200} className="w-full h-full object-contain block select-none pointer-events-none" />
       </div>
 
-      {/* ── Text input ─────────────────────────────────────── */}
+      {/* ?? Text input ??????????????????????????????????????? */}
       <div className="flex flex-col gap-1.5">
         <label className="text-[10px] font-semibold text-text-muted uppercase tracking-wide">Your custom text</label>
         <input value={userText} onChange={(e) => setUserText(e.target.value.toUpperCase())} maxLength={30} placeholder="Type your text..." className="bg-surface-raised rounded-xl px-4 py-3 text-text-primary text-sm placeholder:text-gray-600 outline-none border border-border/50 focus:border-violet-500 transition-colors" />
       </div>
 
-      {/* ── Actions ────────────────────────────────────────── */}
+      {/* ?? Actions ?????????????????????????????????????????? */}
       <div className="flex gap-2.5 pt-1">
         <button onClick={handleCancel} className="flex-1 py-2.5 rounded-xl border border-border/50 text-sm font-semibold text-text-muted hover:text-text-primary hover:bg-surface-raised transition-all duration-200 cursor-pointer">
           Cancel
@@ -55,3 +55,4 @@ export function EffectPreview({ onApply, onCancel }: EffectPreviewProps) {
     </div>
   );
 }
+

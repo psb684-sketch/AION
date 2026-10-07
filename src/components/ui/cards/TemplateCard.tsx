@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+﻿import React, { useRef, useState, useEffect } from "react";
 import { TemplateDefinition } from "@/features/text-templates/types";
 import { Star, Download, Plus } from "lucide-react";
 import { TemplatePreviewPlayer, type TemplatePreviewPlayerHandle } from "@/features/text-templates";
@@ -32,7 +32,7 @@ export const TemplateCard: React.FC<TemplateCardProps> = ({
   const resolvedThumbnailUrl =
     template.thumbnailUrl ||
     template.thumbnail ||
-    `https://raw.githubusercontent.com/AIEraDev/clypra-api/main/data/thumbnails/${template.id}.png`;
+    `https://raw.githubusercontent.com/AIEraDev/AION-api/main/data/thumbnails/${template.id}.png`;
 
   const handleMouseEnter = () => {
     setIsHovered(true);
@@ -72,7 +72,7 @@ export const TemplateCard: React.FC<TemplateCardProps> = ({
         </div>
       )}
 
-      {/* Favorite Star — top-right, appears on hover */}
+      {/* Favorite Star ??top-right, appears on hover */}
       <button
         onClick={onFavorite}
         className={`absolute top-1 right-1 p-1 cursor-pointer rounded-full bg-surface/40 hover:bg-surface/60 border border-border/50 text-text-muted hover:text-text-primary transition-all duration-200 z-10 ${
@@ -84,7 +84,7 @@ export const TemplateCard: React.FC<TemplateCardProps> = ({
         <Star className={`w-3 h-3 ${isFavorite ? "fill-yellow-400 text-yellow-400!" : ""}`} />
       </button>
 
-      {/* Preview area — thumbnail image and live webm video player (lazy-loaded) */}
+      {/* Preview area ??thumbnail image and live webm video player (lazy-loaded) */}
       <div className="flex-1 flex items-center justify-center w-full select-none relative overflow-hidden transition-transform duration-500 ease-out group-hover:scale-[1.05]">
         {/* WebM Video Player (lazy-loaded while thumbnail is shown) */}
         <TemplatePreviewPlayer
@@ -117,13 +117,13 @@ export const TemplateCard: React.FC<TemplateCardProps> = ({
               isHovered ? "opacity-0 z-0" : "opacity-100 z-10"
             }`}
           >
-            <span className="text-2xl">📝</span>
+            <span className="text-2xl">?뱷</span>
             <span className="text-[9px] font-medium">{template.name}</span>
           </div>
         )}
       </div>
 
-      {/* Footer — name + apply button, always visible like EffectCard */}
+      {/* Footer ??name + apply button, always visible like EffectCard */}
       <div className="flex items-center justify-between w-full mt-0.5 z-10">
         <span className="text-[9px] text-text-muted font-medium group-hover:text-text-primary transition-colors truncate max-w-[65px]">
           {template.name}
@@ -156,3 +156,4 @@ export const TemplateCard: React.FC<TemplateCardProps> = ({
     </div>
   );
 };
+

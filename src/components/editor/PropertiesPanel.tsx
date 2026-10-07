@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import {
   Type,
   Layout,
@@ -30,7 +30,7 @@ import {
   calculateClipDimensions,
   type ClipFitModeExtended,
 } from "@/lib/timeline/timelineClip";
-import type { ClipConform } from "@clypra-studio/engine";
+import type { ClipConform } from "@AION-studio/engine";
 import { resolveTextClipStyleUpdate } from "@/lib/text/textClip";
 import type { Clip, TextClip } from "@/types";
 import { usePresetStore } from "@/store/presetStore";
@@ -457,7 +457,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     // snapshot between keystrokes.
     // Bounds are an authoritative commit concern. Recomputing font metrics
     // synchronously for every typed character or slider tick is what caused
-    // the 200–600 ms editor stalls. The preview keeps the existing box during
+    // the 200??00 ms editor stalls. The preview keeps the existing box during
     // the draft; the single history commit recalculates final bounds once.
     const newTransform = { ...fields };
     for (const [key, value] of Object.entries(newTransform)) {
@@ -877,7 +877,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   <span className={`text-[9px] font-medium ${typeInfo.color}`}>
                     {typeInfo.label}
                   </span>
-                  <span className="text-[9px] text-text-muted/40">•</span>
+                  <span className="text-[9px] text-text-muted/40">??/span>
                   <span className="text-[9px] text-text-muted tabular-nums flex items-center gap-0.5">
                     <Clock className="w-2.5 h-2.5" />
                     {clipDuration}s
@@ -1146,3 +1146,4 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </div>
   );
 };
+

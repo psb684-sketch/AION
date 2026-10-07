@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { LaunchScreen } from "@/components/screens/LaunchScreen";
 import { EditorScreen } from "@/components/screens/EditorScreen";
 import { TooltipProvider } from "@/components/ui/Tooltip";
@@ -106,7 +106,7 @@ const App = () => {
         const projects = await platform.getRecentProjects();
         setRecentProjects(projects);
 
-        // ── Crash recovery check ─────────────────────────────────────────
+        // ?? Crash recovery check ?????????????????????????????????????????
         // If the previous session was not closed cleanly (crash / browser refresh),
         // an IndexedDB snapshot will exist. Prompt the user to restore it.
         const recovered = await hasSnapshot();
@@ -121,7 +121,7 @@ const App = () => {
           }
         }
 
-        // ── Perf-log session ─────────────────────────────────────────────
+        // ?? Perf-log session ?????????????????????????????????????????????
         // Open a stable session ID scoped to this app launch. The session file
         // accumulates all telemetry locally and is uploaded as a single payload
         // when the window closes, replacing hundreds of per-rollup API calls.
@@ -131,14 +131,14 @@ const App = () => {
 
           // Auto-enable telemetry on first run only. If the user has already
           // made an explicit choice (key present) we never touch their setting.
-          const TELEMETRY_ONBOARDED_KEY = "clypra.telemetryOnboardingShown";
+          const TELEMETRY_ONBOARDED_KEY = "AION.telemetryOnboardingShown";
           if (!localStorage.getItem(TELEMETRY_ONBOARDED_KEY)) {
             PerfLogService.setTelemetryUploadEnabled(true);
             localStorage.setItem(TELEMETRY_ONBOARDED_KEY, "true");
             // Delay slightly so the app finishes loading before the toast appears.
             setTimeout(() => {
               toast.info(
-                "Performance telemetry is enabled to help improve Clypra. You can turn it off in Settings → Preview Diagnostics.",
+                "Performance telemetry is enabled to help improve AION. You can turn it off in Settings ??Preview Diagnostics.",
                 { duration: 7000 },
               );
             }, 2000);
@@ -197,7 +197,7 @@ const App = () => {
     return () => {};
   }, [setRecentProjects]);
 
-  // ─── DEV MODE: Automated Resource Leak Detection ───────────────────────────
+  // ??? DEV MODE: Automated Resource Leak Detection ???????????????????????????
   useEffect(() => {
     if (!import.meta.env.DEV) return;
 
@@ -210,7 +210,7 @@ const App = () => {
 
           if (report.totalLeaked > 0) {
             console.warn(
-              `⚠️ [DEV] RESOURCE LEAKS DETECTED: ${report.totalLeaked} resource(s) from old project still alive`,
+              `?좑툘 [DEV] RESOURCE LEAKS DETECTED: ${report.totalLeaked} resource(s) from old project still alive`,
               {
                 activeProject: report.activeProjectId,
                 leaks: report.leaks.map((r) => ({
@@ -225,7 +225,7 @@ const App = () => {
             // Also log individual leaks for easier debugging
             report.leaks.forEach((leak) => {
               console.warn(
-                `  🔴 Leaked ${leak.kind}: ${leak.id} (project: ${leak.projectId}, alive: ${Math.round((Date.now() - leak.createdAt) / 1000)}s)`,
+                `  ?뵶 Leaked ${leak.kind}: ${leak.id} (project: ${leak.projectId}, alive: ${Math.round((Date.now() - leak.createdAt) / 1000)}s)`,
                 leak.stack ? `\n${leak.stack}` : "",
               );
             });
@@ -238,7 +238,7 @@ const App = () => {
 
     return () => clearInterval(leakCheckInterval);
   }, []);
-  // ───────────────────────────────────────────────────────────────────────────
+  // ???????????????????????????????????????????????????????????????????????????
 
   useEffect(() => {
     if (import.meta.env.DEV || !platform.isTauri()) return;
@@ -301,7 +301,7 @@ const App = () => {
               try {
                 displayPath = platform.convertFileSrc(path);
               } catch {
-                // Not running inside Tauri — keep the raw path (dev/web fallback)
+                // Not running inside Tauri ??keep the raw path (dev/web fallback)
               }
 
               const metadata = await platform.getMediaMetadata(path);
@@ -615,7 +615,7 @@ const App = () => {
     if (!pendingRecovery) return;
     setIsRestoring(true);
     try {
-      // BUG-008 fix: useTimelineStore import removed — loadProject() handles hydration.
+      // BUG-008 fix: useTimelineStore import removed ??loadProject() handles hydration.
       const {
         tracks,
         clips,
@@ -867,7 +867,7 @@ const App = () => {
 
         const { listen } = await import("@tauri-apps/api/event");
         if (disposed) return;
-        unlistenCustomEvent = await listen("clypra://close-requested", () => {
+        unlistenCustomEvent = await listen("AION://close-requested", () => {
           void requestAppClose();
         });
       } catch (error) {
@@ -899,7 +899,7 @@ const App = () => {
       fallback={
         <div className="w-full h-full flex items-center justify-center bg-bg">
           <div className="text-center max-w-md p-8">
-            <div className="text-red-500 text-6xl mb-4">⚠️</div>
+            <div className="text-red-500 text-6xl mb-4">?좑툘</div>
             <h1 className="text-2xl font-bold text-text-primary mb-4">
               Application Error
             </h1>
@@ -954,7 +954,7 @@ const App = () => {
 
       <ProjectLoadingModal />
 
-      {/* ── Closing Project Modal ────────────────────────────────────────── */}
+      {/* ?? Closing Project Modal ?????????????????????????????????????????? */}
       <ClosingProjectModal
         isOpen={isClosingProject}
         projectName={projectNameBeforeClose}
@@ -965,7 +965,7 @@ const App = () => {
         }}
       />
 
-      {/* ── Crash Recovery Dialog ────────────────────────────────────────── */}
+      {/* ?? Crash Recovery Dialog ?????????????????????????????????????????? */}
       <CrashRecoveryDialog
         isOpen={!!pendingRecovery && !project}
         snapshot={pendingRecovery}
@@ -974,7 +974,7 @@ const App = () => {
         onDiscard={handleDiscardRecovery}
       />
 
-      {/* ── Unsaved Changes Confirmation Dialog ─────────────────────────── */}
+      {/* ?? Unsaved Changes Confirmation Dialog ??????????????????????????? */}
       <UnsavedChangesDialog
         isOpen={showUnsavedDialog}
         projectName={project?.name || ""}
@@ -984,10 +984,10 @@ const App = () => {
         onCancel={handleCancelExit}
       />
 
-      {/* ── Auto-Update Banner ───────────────────────────────────────────── */}
+      {/* ?? Auto-Update Banner ????????????????????????????????????????????? */}
       <UpdateBanner updater={autoUpdater} />
 
-      {/* ── Global Toast Notifications ─────────────────────────────────── */}
+      {/* ?? Global Toast Notifications ??????????????????????????????????? */}
       <Toaster
         position="bottom-right"
         theme="dark"
@@ -1004,3 +1004,4 @@ const App = () => {
 };
 
 export default App;
+

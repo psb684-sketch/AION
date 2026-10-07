@@ -1,12 +1,12 @@
-import React, { useMemo } from "react";
+﻿import React, { useMemo } from "react";
 import { Sparkles, Undo2, RotateCcw } from "lucide-react";
 import type { Clip } from "@/types";
 import { PropertySection } from "./primitives/PropertySection";
 import { filterCacheManager } from "@/features/filters/cache/filterCache";
-import type { ColorAdjustments } from "@clypra-studio/engine";
+import type { ColorAdjustments } from "@AION-studio/engine";
 import { ColorWheelsSection } from "./ColorWheelsSection";
 import { LUTSection } from "./LUTSection";
-import { ClypraColorPicker } from "@clypra/ui-color-picker";
+import { ClypraColorPicker } from "@AION/ui-color-picker";
 
 interface AdjustmentsSectionProps {
   selectedClip: Clip;
@@ -483,3 +483,4 @@ export const AdjustmentsSection: React.FC<AdjustmentsSectionProps> = ({
     </PropertySection>
   );
 };
+

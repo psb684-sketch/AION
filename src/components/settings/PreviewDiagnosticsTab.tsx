@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { Activity, Check, Copy, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import {
@@ -57,7 +57,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
           caps.customProtocolLongPoll ? "protocol long-poll" : null,
           caps.webview2SharedBuffer ? "WebView2 shared buffer" : null,
         ].filter(Boolean).join(", ");
-        setPushCapabilities(`Transport candidates: ${candidates || "none"}${caps.webviewRuntime ? ` · WebView ${caps.webviewRuntime}` : ""}`);
+        setPushCapabilities(`Transport candidates: ${candidates || "none"}${caps.webviewRuntime ? ` 쨌 WebView ${caps.webviewRuntime}` : ""}`);
       })
       .catch(() => setPushCapabilities("Transport candidate discovery failed."));
   }, []);
@@ -147,7 +147,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
       const percentile = (fraction: number) =>
         samples[Math.round((samples.length - 1) * fraction)] ?? 0;
       setTransportProbeResult(
-        `518 KB bridge-only: p50 ${percentile(0.5).toFixed(1)} ms · p95 ${percentile(0.95).toFixed(1)} ms (20 runs)`,
+        `518 KB bridge-only: p50 ${percentile(0.5).toFixed(1)} ms 쨌 p95 ${percentile(0.95).toFixed(1)} ms (20 runs)`,
       );
     } catch (error) {
       console.warn("[PreviewDiagnostics] Transport probe failed", error);
@@ -256,7 +256,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
       const smallPaced = await run("1 KB paced", 1024, 20, 50);
       const fullBurst = await run("518 KB burst", 480 * 270 * 4, 60, 0);
       setPushGateResult(
-        `${fullPaced.label} t8→t9 p50/p95 ${fullPaced.p50.toFixed(1)}/${fullPaced.p95.toFixed(1)} ms; t8→t11 canvas+rAF ${fullPaced.paintP50?.toFixed(1) ?? "—"}/${fullPaced.paintP95?.toFixed(1) ?? "—"} ms; ${smallPaced.label} ${smallPaced.p50.toFixed(1)}/${smallPaced.p95.toFixed(1)} ms; ${fullBurst.label} ${fullBurst.fps.toFixed(1)} FPS. ${fullPaced.p95 < 100 && fullBurst.fps >= 20 ? "Gate passed." : "Gate failed; do not enable push playback."}`,
+        `${fullPaced.label} t8?뭪9 p50/p95 ${fullPaced.p50.toFixed(1)}/${fullPaced.p95.toFixed(1)} ms; t8?뭪11 canvas+rAF ${fullPaced.paintP50?.toFixed(1) ?? "??}/${fullPaced.paintP95?.toFixed(1) ?? "??} ms; ${smallPaced.label} ${smallPaced.p50.toFixed(1)}/${smallPaced.p95.toFixed(1)} ms; ${fullBurst.label} ${fullBurst.fps.toFixed(1)} FPS. ${fullPaced.p95 < 100 && fullBurst.fps >= 20 ? "Gate passed." : "Gate failed; do not enable push playback."}`,
       );
     } catch (error) {
       console.warn("[PreviewDiagnostics] Push transport gate failed", error);
@@ -272,7 +272,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
       ? "Native surface"
     : state.path === "webview"
         ? "WebView bridge"
-        : "—";
+        : "??;
 
   return (
     <section className="space-y-4">
@@ -330,7 +330,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
             <Copy className="mr-2 h-4 w-4" />
           )}
           {copyingReport
-            ? "Preparing report…"
+            ? "Preparing report??
             : reportCopied
               ? "Copied"
               : "Copy performance report"}
@@ -343,7 +343,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
           disabled={!isTauriRuntime() || runningTransportProbe}
           className="cursor-pointer"
         >
-          {runningTransportProbe ? "Measuring bridge…" : "Run 518 KB bridge-only probe"}
+          {runningTransportProbe ? "Measuring bridge?? : "Run 518 KB bridge-only probe"}
         </Button>
         {transportProbeResult && (
           <p className="text-xs text-text-muted">{transportProbeResult}</p>
@@ -356,7 +356,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
           disabled={!isTauriRuntime() || runningPushGate}
           className="cursor-pointer"
         >
-          {runningPushGate ? "Measuring push Channel…" : "Run push-bridge transport gate"}
+          {runningPushGate ? "Measuring push Channel?? : "Run push-bridge transport gate"}
         </Button>
         {pushGateResult && (
           <p className="text-xs text-text-muted">{pushGateResult}</p>
@@ -367,7 +367,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
       </div>
       <p className="text-xs text-text-muted">
         The copied report contains local native and WebView stage percentiles.
-        Performance reports are uploaded to Clypra servers when a session closes,
+        Performance reports are uploaded to AION servers when a session closes,
         only if telemetry upload is enabled in Settings. Reports do not include
         project paths or media file names.
       </p>
@@ -383,7 +383,7 @@ export const PreviewDiagnosticsTab: React.FC = () => {
             }}
             className="rounded border-border bg-surface text-primary focus:ring-1 focus:ring-primary"
           />
-          <span>Share anonymous performance diagnostics with Clypra (off by default)</span>
+          <span>Share anonymous performance diagnostics with AION (off by default)</span>
         </label>
         {perfLogService.getSessionId() && (
           <p className="text-[11px] text-text-muted font-mono">
@@ -399,3 +399,4 @@ export const PreviewDiagnosticsTab: React.FC = () => {
     </section>
   );
 };
+

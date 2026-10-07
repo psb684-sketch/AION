@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect } from "react";
+﻿import React, { useRef, useState, useCallback, useEffect } from "react";
 import {
   Plus,
   Download,
@@ -25,7 +25,7 @@ import { useTransportControls } from "@/hooks/usePlaybackClock";
 import { useCaptionStore } from "@/store/captionStore";
 import { useUIStore } from "@/store/uiStore";
 import { useEffectsStore } from "@/features/text-effects/store/effectsStore";
-import { ClypraColorPicker } from "@clypra/ui-color-picker";
+import { ClypraColorPicker } from "@AION/ui-color-picker";
 import { ClypraSlider, ClypraProgressBar } from "@/components/ui/primitives";
 import { parseSubtitlesAsync } from "@/features/subtitles/parser";
 import {
@@ -245,7 +245,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
     broadcastStyleUpdate(patch, "Customize Caption Typography");
   };
 
-  // Fetch cloud caption templates from Clypra API
+  // Fetch cloud caption templates from AION API
   const loadCaptionTemplates = useCallback(async (forceRefresh = false) => {
     setIsLoadingTemplates(true);
     try {
@@ -592,13 +592,13 @@ export const CaptionsTab: React.FC<TabProps> = () => {
 
     const modelState = captionSettings.models[model];
     if (modelState?.status !== "downloaded") {
-      setErrorMsg(`Whisper model "${model}" is not downloaded yet. Please download it from Settings → Captions.`);
+      setErrorMsg(`Whisper model "${model}" is not downloaded yet. Please download it from Settings ??Captions.`);
       toggleSettingsModal();
       return;
     }
 
     if (platform.isCapacitor()) {
-      setErrorMsg("Local auto-captions are only supported on Clypra Desktop.");
+      setErrorMsg("Local auto-captions are only supported on AION Desktop.");
       return;
     }
 
@@ -613,7 +613,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
 
     setErrorMsg(null);
     setIsGenerating(true);
-    setGenerationProgress("Extracting timeline audio & running Whisper…");
+    setGenerationProgress("Extracting timeline audio & running Whisper??);
 
     try {
       const captionTrack = getOrCreateActiveTrack();
@@ -631,12 +631,12 @@ export const CaptionsTab: React.FC<TabProps> = () => {
 
         try {
           // Build a short, readable display name:
-          // strip extension → strip trailing bracket IDs like [1120622...] → trim to 22 chars
+          // strip extension ??strip trailing bracket IDs like [1120622...] ??trim to 22 chars
           const rawName = asset.name || "media";
           const noExt = rawName.replace(/\.[^.]+$/, "");
           const cleaned = noExt.replace(/\s*\[[^\]]*\]\s*$/, "").trim();
-          const displayName = cleaned.length > 22 ? `${cleaned.slice(0, 22)}…` : cleaned;
-          setGenerationProgress(`Transcribing "${displayName}"…`);
+          const displayName = cleaned.length > 22 ? `${cleaned.slice(0, 22)}?? : cleaned;
+          setGenerationProgress(`Transcribing "${displayName}"??);
           const rawSegments = await invoke<any[]>("generate_auto_captions", {
             videoPath: asset.path,
             modelSize: model,
@@ -667,7 +667,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
           });
 
           // Run Smart NLE Segmentation with selected pacing preset
-          setGenerationProgress("Applying smart subtitle segmentation…");
+          setGenerationProgress("Applying smart subtitle segmentation??);
           const segmentedCues = segmentWordTimestamps(allWords, { preset: pacingPreset });
 
           const clipStartSec = mediaClip.startTime;
@@ -789,10 +789,10 @@ export const CaptionsTab: React.FC<TabProps> = () => {
       {/* Hidden file input for SRT/VTT import */}
       <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".srt,.vtt" className="hidden" />
 
-      {/* ── Scrollable controls area ── */}
+      {/* ?? Scrollable controls area ?? */}
       <div className="flex flex-col gap-3 p-3 pb-2 overflow-y-auto scrollbar-thin">
 
-        {/* ── Section: Generator / AI Speech Model ── */}
+        {/* ?? Section: Generator / AI Speech Model ?? */}
         <div className="space-y-2 p-2.5 rounded-xl bg-surface-raised/40 border border-white/6">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-text-muted/70 flex items-center gap-1.5">
@@ -873,7 +873,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
             {isLoadingTemplates ? (
               <div className="flex items-center gap-2 py-1.5 text-xs text-text-muted">
                 <RefreshCw className="w-3 h-3 text-accent animate-spin" />
-                <span className="text-[11px]">Loading templates…</span>
+                <span className="text-[11px]">Loading templates??/span>
               </div>
             ) : unifiedTemplates.length > 0 ? (
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
@@ -944,7 +944,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
               }`}
             >
               <Sparkles className={`w-3.5 h-3.5 ${isGenerating ? "animate-spin" : ""}`} />
-              {isGenerating ? (generationProgress || "Generating captions…") : "Auto-Generate Captions"}
+              {isGenerating ? (generationProgress || "Generating captions??) : "Auto-Generate Captions"}
             </button>
             {isGenerating && (
               <ClypraProgressBar
@@ -958,7 +958,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
         </div>
 
 
-        {/* ── Section: Caption Styling ── */}
+        {/* ?? Section: Caption Styling ?? */}
         <div className="space-y-2 p-2.5 rounded-xl bg-surface-raised/40 border border-white/6">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-text-muted/70 flex items-center gap-1.5">
@@ -1002,7 +1002,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
             </button>
           </div>
 
-          {/* ── UNIFIED TIER 1: Caption Templates Gallery ── */}
+          {/* ?? UNIFIED TIER 1: Caption Templates Gallery ?? */}
           {stylingTier === "templates" && (
             <div className="space-y-2 pt-0.5">
               <div className="flex items-center justify-between">
@@ -1013,7 +1013,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
                   onClick={() => loadCaptionTemplates(true)}
                   disabled={isLoadingTemplates}
                   className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors disabled:opacity-50 cursor-pointer"
-                  title="Check for newly published caption templates from Clypra Studio"
+                  title="Check for newly published caption templates from AION Studio"
                 >
                   <RefreshCw className={`w-3 h-3 ${isLoadingTemplates ? "animate-spin" : ""}`} />
                   Refresh
@@ -1024,7 +1024,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
               {isLoadingTemplates ? (
                 <div className="flex flex-col items-center justify-center py-8 px-4 rounded-xl border border-white/6 bg-black/20 text-center gap-2">
                   <RefreshCw className="w-5 h-5 text-accent animate-spin" />
-                  <p className="text-xs text-text-muted">Loading caption templates…</p>
+                  <p className="text-xs text-text-muted">Loading caption templates??/p>
                 </div>
               ) : unifiedTemplates.length > 0 ? (
                 <div className="grid grid-cols-2 gap-2">
@@ -1133,7 +1133,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
                   <div className="space-y-1 max-w-[240px]">
                     <p className="text-xs font-semibold text-text-primary">No Caption Templates Found</p>
                     <p className="text-[11px] text-text-muted leading-snug">
-                      Design and publish caption templates in Clypra Studio to see them here.
+                      Design and publish caption templates in AION Studio to see them here.
                     </p>
                   </div>
                   <button
@@ -1153,13 +1153,12 @@ export const CaptionsTab: React.FC<TabProps> = () => {
                 className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg border border-dashed border-white/12 text-[10px] text-text-muted hover:text-text-primary hover:border-accent/30 transition-all cursor-pointer"
               >
                 <Wand2 className="w-3 h-3" />
-                Customise further…
-                <ChevronRight className="w-3 h-3" />
+                Customise further??                <ChevronRight className="w-3 h-3" />
               </button>
             </div>
           )}
 
-          {/* ── TIER 2: Custom Typography (Plain Text Designer) ── */}
+          {/* ?? TIER 2: Custom Typography (Plain Text Designer) ?? */}
           {stylingTier === "plain" && (
             <div className="space-y-2.5 pt-1">
 
@@ -1345,7 +1344,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
           )}
         </div>
 
-        {/* ── Section: Files & Tools ── */}
+        {/* ?? Section: Files & Tools ?? */}
         <div className="grid grid-cols-3 gap-1.5">
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -1380,7 +1379,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
         )}
       </div>
 
-      {/* ── Section: Interactive Subtitle Transcript / Cues List ── */}
+      {/* ?? Section: Interactive Subtitle Transcript / Cues List ?? */}
       <div className="flex-1 flex flex-col min-h-0 border-t border-border/50">
         <div className="flex items-center justify-between px-3 py-2 shrink-0">
           <h4 className="text-[10px] font-semibold uppercase tracking-widest text-text-muted/70">
@@ -1437,7 +1436,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
                       <Play className="w-2.5 h-2.5 fill-current" />
                       {formatSrtTimestamp(cue.startTicks)}
                     </button>
-                    <span className="text-text-muted/40">→</span>
+                    <span className="text-text-muted/40">??/span>
                     <span className="font-mono">{formatSrtTimestamp(cue.endTicks)}</span>
 
                     <span className="flex-1" />
@@ -1462,7 +1461,7 @@ export const CaptionsTab: React.FC<TabProps> = () => {
                     value={cue.text}
                     onChange={(e) => handleCueTextChange(cue, e.target.value)}
                     className="w-full min-h-[40px] p-1.5 bg-background/50 focus:bg-background/80 border border-white/8 focus:border-accent/60 rounded-md text-xs text-text-primary resize-none outline-none transition-colors"
-                    placeholder="Subtitle text…"
+                    placeholder="Subtitle text??
                   />
                 </div>
               );
@@ -1473,3 +1472,4 @@ export const CaptionsTab: React.FC<TabProps> = () => {
     </div>
   );
 };
+

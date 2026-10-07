@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -920,7 +920,7 @@ export const NativeProgramPreview: React.FC = () => {
   renderStateRef.current.previewQuality = previewQuality;
   // Audit 1.3 fix: recompute version hashes here (React-render time) rather than in
   // the RAF loop. Zustand only triggers a React render when the relevant slices change,
-  // so this runs at most once per actual timeline/effects change, not 60× per second.
+  // so this runs at most once per actual timeline/effects change, not 60횞 per second.
   renderStateRef.current.sceneVersions = {
     clipVersion: computeClipVersion(clips, transitions),
     assetsVersion: computeAssetsVersion(mediaAssets),
@@ -1225,7 +1225,7 @@ export const NativeProgramPreview: React.FC = () => {
 
       // Bug 7 fix: never reset to (0,0) once dimensions have been established.
       // This can happen transiently when the shared previewContainerCallback
-      // fires null during the placeholder → main-view commit (the placeholder
+      // fires null during the placeholder ??main-view commit (the placeholder
       // unmounts before the real container mounts), causing a momentary preview
       // blank that re-shows the loading placeholder.
       if (newWidth === 0 && newHeight === 0) return;
@@ -1271,7 +1271,7 @@ export const NativeProgramPreview: React.FC = () => {
     // `project?.id` covers project-switch; no need for the full unstable `project` object.
   }, [project?.id, canvasWidth, canvasHeight, displayWidth, displayHeight]);
 
-  // ── Render loop ──────────────────────────────────────────────────
+  // ?? Render loop ??????????????????????????????????????????????????
   useEffect(() => {
     // The desktop editor is the native runtime. Browser rendering is kept out
     // of this component so a missing native runtime cannot silently resurrect a
@@ -1288,8 +1288,8 @@ export const NativeProgramPreview: React.FC = () => {
 
     // Guard: the render loop is keyed on activeSession?.sessionId as a dep.
     // If the React state (activeSession) and the global session registry have
-    // diverged — which happens during a fast project switch where the dep
-    // fires before subscribeToSessionChanges has resolved — bail immediately.
+    // diverged ??which happens during a fast project switch where the dep
+    // fires before subscribeToSessionChanges has resolved ??bail immediately.
     // The dep change will fire again once activeSession catches up, restarting
     // the loop with the correct session.
     if (
@@ -1540,14 +1540,14 @@ export const NativeProgramPreview: React.FC = () => {
       );
     };
 
-    const GLOBAL_MAX_BODY_MASKS = 16; // ~59MB at 3.68MB/mask — well under the shared 128MB Rust pool
+    const GLOBAL_MAX_BODY_MASKS = 16; // ~59MB at 3.68MB/mask ??well under the shared 128MB Rust pool
 
     // Insertion-ordered (JS Maps preserve insertion order), so delete+re-set = LRU touch.
     const globalMaskRegistry = new Map<
       string,
       { baseAssetId: string; time: number }
     >();
-    // Index only — never independently decides what to evict.
+    // Index only ??never independently decides what to evict.
     const maskIdsByBaseId = new Map<string, Set<string>>();
 
     function extractMaskTime(assetId: string): number {
@@ -1998,7 +1998,7 @@ export const NativeProgramPreview: React.FC = () => {
         }
         const request = clampReadbackRequest(rawRequest);
         // Spans are created at dispatch time (before requestVisible) so that
-        // cache hits — which bypass load() entirely — are also recorded.
+        // cache hits ??which bypass load() entirely ??are also recorded.
         // The load() function only handles the actual FFmpeg/GPU readback.
         const render = async () => {
           const readbackStartedAt = performance.now();
@@ -2036,7 +2036,7 @@ export const NativeProgramPreview: React.FC = () => {
         // UNCH sentinel: Rust confirmed the frame is identical to the last
         // delivered one.  Return the currently displayed frame directly so the
         // canvas paint is skipped (drawNativeFrameToCanvas only repaints when
-        // the frame reference changes — see the render loop guard).
+        // the frame reference changes ??see the render loop guard).
         // The scheduler will cache the existing frame under the new requestKey
         // as a warm-up for the next identical tick, which is safe and efficient.
         if (isUnchangedFramePayload(rgba)) {
@@ -2062,7 +2062,7 @@ export const NativeProgramPreview: React.FC = () => {
     // Deliberately off by default. This is enabled only for the live Phase 2b
     // benchmark so the invoke bridge remains the unconditional rollback path.
     const previewPushBridgeEnabled =
-      import.meta.env.VITE_CLYPRA_PREVIEW_PUSH_BRIDGE === "1";
+      import.meta.env.VITE_AION_PREVIEW_PUSH_BRIDGE === "1";
     let pushBridgeReady = false;
     let pushBridgeOpening: Promise<void> | null = null;
     let pushBridgeFailed = false;
@@ -2555,7 +2555,7 @@ export const NativeProgramPreview: React.FC = () => {
     // can force a canvas repaint after hiding the native surface.
     _globalPreviewWakeFn = scheduleNextFrame;
     // forceRepaint sets the dirty flag first so mightNeedRender is guaranteed true,
-    // then schedules the next frame — needed when time/epoch/clips are all unchanged
+    // then schedules the next frame ??needed when time/epoch/clips are all unchanged
     // (e.g. immediately after closing the export dialog with a hidden native surface).
     _globalPreviewForceRepaintFn = () => {
       forceRenderNeeded = true;
@@ -2633,7 +2633,7 @@ export const NativeProgramPreview: React.FC = () => {
 
     const renderLoop = async () => {
       if (!isActive || renderInFlight) return;
-      const wasRenderInFlightAtStart = renderInFlight; // false at this point — guard passed
+      const wasRenderInFlightAtStart = renderInFlight; // false at this point ??guard passed
       renderInFlight = true;
       const renderStartedAt = performance.now();
       let traceFrameIndex = -1;
@@ -2755,7 +2755,7 @@ export const NativeProgramPreview: React.FC = () => {
 
         // Bug 2/3 fix: hoist all change-detection variables to before the heavy
         // async rasterization and IPC calls. If nothing could have changed visually
-        // since the last rendered frame, exit immediately — cutting per-RAF CPU cost
+        // since the last rendered frame, exit immediately ??cutting per-RAF CPU cost
         // to near-zero during steady paused sessions or locked-off playback.
         const clipsChanged = state.clips !== lastRenderedClips;
         const tracksChanged = state.tracks !== lastRenderedTracks;
@@ -3252,8 +3252,8 @@ export const NativeProgramPreview: React.FC = () => {
                 nativeReadbackFallbackPath ? presenterFallbackReason : undefined,
               ...telemetryContextBase,
             };
-        // Capture composition complexity from the evaluated scene—not clip
-        // metadata—so hidden, transparent, and non-active layers never skew
+        // Capture composition complexity from the evaluated scene?봭ot clip
+        // metadata?봲o hidden, transparent, and non-active layers never skew
         // the media/multi-stack cohort that is persisted with this session.
         const visualLayers = scene.visualLayers;
         const mediaLayers = visualLayers.filter(
@@ -3812,8 +3812,7 @@ export const NativeProgramPreview: React.FC = () => {
                   readbackSourceFrameStride:
                     presentation.sourceFramesPerPresentation,
                 };
-                // Create the span BEFORE requestVisible() so cache hits —
-                // which never enter load() — are recorded too.
+                // Create the span BEFORE requestVisible() so cache hits ??                // which never enter load() ??are recorded too.
                 if (nativePerfCollector.isEnabled()) {
                   const playbackSpan = nativePerfCollector.begin(
                     readbackSource.request,
@@ -4112,7 +4111,7 @@ export const NativeProgramPreview: React.FC = () => {
                   nativeFailureCount = 0;
                 }
                 nativeFailureCount += 1;
-                // ── Readback failure diagnostic ──
+                // ?? Readback failure diagnostic ??
                 console.warn(
                   "%c[preview-diag] readback FAILED",
                   "color:#ef4444;font-weight:bold",
@@ -4577,7 +4576,7 @@ export const NativeProgramPreview: React.FC = () => {
     // now read from renderStateRef inside the loop, so they are NOT listed as deps here.
     // Bug 6 fix: project?.id instead of full project object (updateProject always creates
     // a new reference, so `project` as a dep would restart the loop on every store write).
-    // Audit 4.6 fix: nativeSurfaceReady removed from deps — it is now read from
+    // Audit 4.6 fix: nativeSurfaceReady removed from deps ??it is now read from
     // nativeSurfaceReadyRef.current inside the loop, preventing the loop from restarting
     // (and emitting a blank frame) on every native surface probe and window resize.
   }, [canvasEl, project?.id, projectInitializing, activeSession?.sessionId]);
@@ -4605,8 +4604,8 @@ export const NativeProgramPreview: React.FC = () => {
     setActiveContext("program");
     if (typeof window !== "undefined") {
       (
-        window as unknown as { __CLYPRA_PREVIEW_DEBUG__?: unknown }
-      ).__CLYPRA_PREVIEW_DEBUG__ = {
+        window as unknown as { __AION_PREVIEW_DEBUG__?: unknown }
+      ).__AION_PREVIEW_DEBUG__ = {
         getPlaybackState: () => clock.getState(),
         getPreviewOutputMode: () =>
           previewTelemetryContextRef.current.surface === "native-surface"
@@ -4717,15 +4716,15 @@ export const NativeProgramPreview: React.FC = () => {
                   <div className="absolute top-3 left-3 z-30 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-mono text-white/90 shadow-lg select-none">
                     <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     <span>{playbackStats.fps} fps</span>
-                    <span className="text-white/30">•</span>
+                    <span className="text-white/30">??/span>
                     <span>{playbackStats.avgTotalMs.toFixed(1)}ms</span>
-                    <span className="text-white/30">•</span>
+                    <span className="text-white/30">??/span>
                     <span className="text-emerald-300">
                       {playbackStats.hitRatePercent.toFixed(0)}% cached
                     </span>
                     {playbackStats.stackedStreams > 1 && (
                       <>
-                        <span className="text-white/30">•</span>
+                        <span className="text-white/30">??/span>
                         <span className="text-amber-300">
                           {playbackStats.stackedStreams} streams
                         </span>
@@ -4751,7 +4750,7 @@ export const NativeProgramPreview: React.FC = () => {
               </div>
               <div className="text-xs text-text-muted/80 space-y-1 font-mono">
                 <div>
-                  {canvasWidth}×{canvasHeight} • {frameRate}fps
+                  {canvasWidth}횞{canvasHeight} ??{frameRate}fps
                 </div>
                 <div className="text-text-muted/60">Rec.709</div>
               </div>
@@ -4835,3 +4834,4 @@ export const NativeProgramPreview: React.FC = () => {
 };
 
 /** @deprecated Import NativeProgramPreview. Kept temporarily for downstream integrations. */
+

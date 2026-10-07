@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+﻿import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { EffectCard } from "../EffectCard";
 import type { TextEffectDefinition } from "@/features/text-effects/types/types";
@@ -13,7 +13,7 @@ describe("EffectCard Component", () => {
     id: "effect-1",
     category: "3d",
     name: "Classic 3D",
-    text: "CLYPRA",
+    text: "AION",
     thumbnail: "http://example.com/thumbnail.png",
     thumbnailUrl: "",
     description: "A classic 3D text effect",
@@ -114,3 +114,4 @@ describe("EffectCard Component", () => {
     expect(defaultProps.onApply).toHaveBeenCalledTimes(1);
   });
 });
+

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import { Layers, Sparkles, User } from "lucide-react";
 import { useUIStore } from "@/store/uiStore";
 import { useTimelineStore } from "@/store/timelineStore";
@@ -387,7 +387,7 @@ const ClipInner: React.FC<ClipProps> = ({
   const resizePointerIdRef = useRef<number | null>(null);
   const activeResizeHandleRef = useRef<HTMLElement | null>(null);
   // PERF (0-B): RAF coalescing refs for resize pointer events.
-  // Raw pointermove fires at 120–240Hz on high-polling devices. We coalesce
+  // Raw pointermove fires at 120??40Hz on high-polling devices. We coalesce
   // all events within a single display frame into one store write.
   const resizeRafRef = useRef<number | null>(null);
   const pendingResizeEventRef = useRef<PointerEvent | null>(null);
@@ -618,7 +618,7 @@ const ClipInner: React.FC<ClipProps> = ({
 
           // PERF (0-B / 8-C): Skip epoch increment during drag preview.
           // The committed TimelineTrimCommand on pointerup will trigger a full
-          // epoch increment. This prevents 120–240 filmstrip invalidations/sec.
+          // epoch increment. This prevents 120??40 filmstrip invalidations/sec.
           updateClip(clipId, {
             startTime: newStartTime,
             duration: newDuration,
@@ -664,7 +664,7 @@ const ClipInner: React.FC<ClipProps> = ({
       }
     };
 
-    // PERF (0-B): RAF coalescing — save the latest event and schedule at most
+    // PERF (0-B): RAF coalescing ??save the latest event and schedule at most
     // one RAF per display frame. Many pointermove events collapse to one store write.
     const handlePointerMove = (e: PointerEvent) => {
       pendingResizeEventRef.current = e;
@@ -740,7 +740,7 @@ const ClipInner: React.FC<ClipProps> = ({
               afterResize.gaps,
             ),
           );
-        // Record trim telemetry — count affected clips as the number that
+        // Record trim telemetry ??count affected clips as the number that
         // actually changed between before/after snapshots.
         const trimmedCount = initialResizeStart.beforeClips.filter((bc) => {
           const ac = afterResize.clips.find((c) => c.id === bc.id);
@@ -816,7 +816,7 @@ const ClipInner: React.FC<ClipProps> = ({
     setSnapGuides,
     clearSnapGuides,
     previewInteractionCoordinator,
-    // useHistoryStore is intentionally omitted — it is the stable Zustand
+    // useHistoryStore is intentionally omitted ??it is the stable Zustand
     // hook reference itself (never changes), so including it was misleading (BUG 8-D).
     // useHistoryStore.getState() is called imperatively inside finishResize.
   ]);
@@ -936,7 +936,7 @@ const ClipInner: React.FC<ClipProps> = ({
           ? `translateY(${dragState?.offsetY ?? 0}px)`
           : "none",
         border: isInvalidPosition
-          ? "2px solid var(--clypra-clip-invalid)"
+          ? "2px solid var(--AION-clip-invalid)"
           : undefined,
       }}
     >
@@ -944,7 +944,7 @@ const ClipInner: React.FC<ClipProps> = ({
       <div
         data-testid={`clip-${clip.id}-resize-left`}
         data-clip-resize-handle="true"
-        className={`group/resize absolute left-0 top-0 z-30 h-full w-3 cursor-col-resize transition-colors ${resizeHandleVisibility} ${isResizing === "left" ? (isRippleResize ? "bg-clypra-clip-effect/35" : "bg-clypra-clip-fg/35") : "bg-transparent"}`}
+        className={`group/resize absolute left-0 top-0 z-30 h-full w-3 cursor-col-resize transition-colors ${resizeHandleVisibility} ${isResizing === "left" ? (isRippleResize ? "bg-AION-clip-effect/35" : "bg-AION-clip-fg/35") : "bg-transparent"}`}
         style={{ touchAction: "none", cursor: "col-resize" }}
         onPointerDown={(e) => {
           e.stopPropagation(); // Prevent drag when clicking resize handle
@@ -957,7 +957,7 @@ const ClipInner: React.FC<ClipProps> = ({
         }
       >
         <div
-          className={`pointer-events-none absolute inset-y-0 left-0 h-full w-0.5 rounded-r bg-clypra-clip-fg/90 transition-all group-hover/resize:w-0.75 group-hover/resize:bg-clypra-clip-fg ${isResizing === "left" ? (isRippleResize ? "bg-clypra-clip-effect" : "bg-clypra-clip-fg") : ""}`}
+          className={`pointer-events-none absolute inset-y-0 left-0 h-full w-0.5 rounded-r bg-AION-clip-fg/90 transition-all group-hover/resize:w-0.75 group-hover/resize:bg-AION-clip-fg ${isResizing === "left" ? (isRippleResize ? "bg-AION-clip-effect" : "bg-AION-clip-fg") : ""}`}
         />
       </div>
 
@@ -972,14 +972,14 @@ const ClipInner: React.FC<ClipProps> = ({
               draggable={false}
             />
           ) : (
-            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-clypra-clip-overlay">
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-AION-clip-overlay">
               <Layers className="h-4 w-4" />
             </div>
           )}
           <div className="min-w-0 truncate text-[11px] font-semibold">
             {clip.name || "Compound Clip"}
           </div>
-          <div className="shrink-0 rounded bg-clypra-clip-overlay px-1.5 py-0.5 text-[10px]">
+          <div className="shrink-0 rounded bg-AION-clip-overlay px-1.5 py-0.5 text-[10px]">
             {clip.compoundChildren?.length ?? 0}
           </div>
         </div>
@@ -987,11 +987,11 @@ const ClipInner: React.FC<ClipProps> = ({
         <div className="relative flex h-full w-full items-center px-3">
           {/* Icon badge for text role differentiation */}
           {(isCaption || isTitle || inferredKind === "text-template") && (
-            <div className="absolute left-1 top-1/2 -translate-y-1/2 flex items-center justify-center rounded bg-clypra-clip-badge-bg px-1.5 py-0.5 text-[9px] font-semibold text-clypra-clip-fg backdrop-blur-sm">
+            <div className="absolute left-1 top-1/2 -translate-y-1/2 flex items-center justify-center rounded bg-AION-clip-badge-bg px-1.5 py-0.5 text-[9px] font-semibold text-AION-clip-fg backdrop-blur-sm">
               {isCaption ? "CC" : "T"}
             </div>
           )}
-          <div className="text-[12px] text-clypra-clip-fg font-medium tracking-[0.01em] truncate max-w-full select-none pointer-events-none pl-4 flex items-center gap-1.5">
+          <div className="text-[12px] text-AION-clip-fg font-medium tracking-[0.01em] truncate max-w-full select-none pointer-events-none pl-4 flex items-center gap-1.5">
             <span className="truncate">{getClipDisplayText(clip)}</span>
             {(clip as any).behindSubject && (
               <span
@@ -1018,37 +1018,37 @@ const ClipInner: React.FC<ClipProps> = ({
         </div>
       ) : isClipFilter ? (
         <div className="relative flex h-full w-full items-center px-2 select-none pointer-events-none gap-2">
-          <div className="w-5 h-5 rounded bg-clypra-clip-effect/80 border border-clypra-clip-fg/15 flex items-center justify-center backdrop-blur-sm">
-            <Sparkles className="w-3.5 h-3.5 text-clypra-clip-fg" />
+          <div className="w-5 h-5 rounded bg-AION-clip-effect/80 border border-AION-clip-fg/15 flex items-center justify-center backdrop-blur-sm">
+            <Sparkles className="w-3.5 h-3.5 text-AION-clip-fg" />
           </div>
-          <span className="text-[10px] font-bold text-clypra-clip-fg/90 truncate">
+          <span className="text-[10px] font-bold text-AION-clip-fg/90 truncate">
             {clip.name || "Filter"}
           </span>
         </div>
       ) : isClipVideoEffect ? (
         <div className="relative flex h-full w-full items-center px-2 select-none pointer-events-none gap-2">
-          <div className="w-5 h-5 rounded bg-clypra-clip-effect/80 border border-clypra-clip-fg/15 flex items-center justify-center backdrop-blur-sm">
-            <Sparkles className="w-3.5 h-3.5 text-clypra-clip-fg" />
+          <div className="w-5 h-5 rounded bg-AION-clip-effect/80 border border-AION-clip-fg/15 flex items-center justify-center backdrop-blur-sm">
+            <Sparkles className="w-3.5 h-3.5 text-AION-clip-fg" />
           </div>
-          <span className="text-[10px] font-bold text-clypra-clip-fg/90 truncate">
+          <span className="text-[10px] font-bold text-AION-clip-fg/90 truncate">
             {clip.name || "Video Effect"}
           </span>
         </div>
       ) : isClipBodyEffect ? (
         <div className="relative flex h-full w-full items-center px-2 select-none pointer-events-none gap-2">
-          <div className="w-5 h-5 rounded bg-clypra-clip-effect/80 border border-clypra-clip-fg/15 flex items-center justify-center backdrop-blur-sm">
-            <Sparkles className="w-3.5 h-3.5 text-clypra-clip-fg" />
+          <div className="w-5 h-5 rounded bg-AION-clip-effect/80 border border-AION-clip-fg/15 flex items-center justify-center backdrop-blur-sm">
+            <Sparkles className="w-3.5 h-3.5 text-AION-clip-fg" />
           </div>
-          <span className="text-[10px] font-bold text-clypra-clip-fg/90 truncate">
+          <span className="text-[10px] font-bold text-AION-clip-fg/90 truncate">
             {clip.name || "Body Effect"}
           </span>
         </div>
       ) : isClipAnimatedOverlay ? (
         <div className="relative flex h-full w-full items-center px-2 select-none pointer-events-none gap-2">
-          <div className="w-5 h-5 rounded bg-clypra-clip-effect/80 border border-clypra-clip-fg/15 flex items-center justify-center backdrop-blur-sm">
-            <Sparkles className="w-3.5 h-3.5 text-clypra-clip-fg" />
+          <div className="w-5 h-5 rounded bg-AION-clip-effect/80 border border-AION-clip-fg/15 flex items-center justify-center backdrop-blur-sm">
+            <Sparkles className="w-3.5 h-3.5 text-AION-clip-fg" />
           </div>
-          <span className="text-[10px] font-bold text-clypra-clip-fg/90 truncate">
+          <span className="text-[10px] font-bold text-AION-clip-fg/90 truncate">
             {clip.name || "Overlay"}
           </span>
         </div>
@@ -1063,10 +1063,10 @@ const ClipInner: React.FC<ClipProps> = ({
             />
           ) : (
             <div className="w-5 h-5 flex items-center justify-center text-xs shrink-0">
-              🎨
+              ?렓
             </div>
           )}
-          <span className="text-[10px] font-bold text-clypra-clip-fg/90 truncate">
+          <span className="text-[10px] font-bold text-AION-clip-fg/90 truncate">
             {mediaAsset?.name || "Sticker"}
           </span>
           {hasKeyframes && (
@@ -1084,7 +1084,7 @@ const ClipInner: React.FC<ClipProps> = ({
       ) : (
         <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
           {/* CapCut-style hierarchy: metadata, visual strip, then audio strip. */}
-          <div className="flex h-4 shrink-0 items-center gap-2 border-b border-clypra-clip-metadata-border bg-clypra-clip-metadata-bg px-1.5">
+          <div className="flex h-4 shrink-0 items-center gap-2 border-b border-AION-clip-metadata-border bg-AION-clip-metadata-bg px-1.5">
             <div className="min-w-0 truncate text-[9px] font-semibold tracking-[0.01em] text-timeline-clip-text">
               {mediaAsset?.name || "Clip"}
             </div>
@@ -1115,7 +1115,7 @@ const ClipInner: React.FC<ClipProps> = ({
                 }`}
                 title={isKeyframeExpanded ? "Collapse Keyframe Lanes" : "Expand Keyframe Lanes"}
               >
-                <span>◆</span>
+                <span>??/span>
                 <span>Anim</span>
               </button>
             )}
@@ -1124,7 +1124,7 @@ const ClipInner: React.FC<ClipProps> = ({
           mediaAsset &&
           (mediaAsset.type === "video" || mediaAsset.type === "image") ? (
             <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
-              <div className="min-h-0 flex-1 overflow-hidden bg-clypra-clip-overlay-soft">
+              <div className="min-h-0 flex-1 overflow-hidden bg-AION-clip-overlay-soft">
                 <ClipFilmstrip
                   className="h-full w-full"
                   clip={clip}
@@ -1144,7 +1144,7 @@ const ClipInner: React.FC<ClipProps> = ({
               {mediaAsset.type === "video" && mediaAsset.path && hasAudio && (
                 <div
                   data-testid="clip-audio-waveform"
-                  className="relative h-4 shrink-0 border-t border-clypra-clip-waveform-border bg-clypra-clip-waveform-bg px-0.5"
+                  className="relative h-4 shrink-0 border-t border-AION-clip-waveform-border bg-AION-clip-waveform-bg px-0.5"
                 >
                   <VolumeWaveform
                     audioPath={(clip as any).audioPath || mediaAsset.path}
@@ -1220,7 +1220,7 @@ const ClipInner: React.FC<ClipProps> = ({
       <div
         data-testid={`clip-${clip.id}-resize-right`}
         data-clip-resize-handle="true"
-        className={`group/resize absolute right-0 top-0 z-30 h-full w-3 cursor-col-resize transition-colors ${resizeHandleVisibility} ${isResizing === "right" ? (isRippleResize ? "bg-clypra-clip-effect/35" : "bg-clypra-clip-fg/35") : "bg-transparent"}`}
+        className={`group/resize absolute right-0 top-0 z-30 h-full w-3 cursor-col-resize transition-colors ${resizeHandleVisibility} ${isResizing === "right" ? (isRippleResize ? "bg-AION-clip-effect/35" : "bg-AION-clip-fg/35") : "bg-transparent"}`}
         style={{ touchAction: "none", cursor: "col-resize" }}
         onPointerDown={(e) => {
           e.stopPropagation(); // Prevent drag when clicking resize handle
@@ -1234,7 +1234,7 @@ const ClipInner: React.FC<ClipProps> = ({
         }
       >
         <div
-          className={`pointer-events-none absolute inset-y-0 right-0 h-full w-0.5 rounded-l bg-clypra-clip-fg/90 transition-all group-hover/resize:w-0.75 group-hover/resize:bg-clypra-clip-fg ${isResizing === "right" ? (isRippleResize ? "bg-clypra-clip-effect" : "bg-clypra-clip-fg") : ""}`}
+          className={`pointer-events-none absolute inset-y-0 right-0 h-full w-0.5 rounded-l bg-AION-clip-fg/90 transition-all group-hover/resize:w-0.75 group-hover/resize:bg-AION-clip-fg ${isResizing === "right" ? (isRippleResize ? "bg-AION-clip-effect" : "bg-AION-clip-fg") : ""}`}
         />
       </div>
     </div>
@@ -1320,3 +1320,4 @@ const arePropsEqual = (prevProps: ClipProps, nextProps: ClipProps) => {
 };
 
 export const Clip = React.memo(ClipInner, arePropsEqual);
+

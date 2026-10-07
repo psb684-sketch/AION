@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+﻿import React, { useEffect, useRef, useState } from "react";
 import { ZoomIn, ZoomOut, ArrowLeftRight, Undo2, Redo2, ScissorsLineDashed, ChevronLeft, ChevronRight, Trash2, Copy, Maximize2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/Tooltip";
@@ -301,10 +301,10 @@ const TimelineToolbarComponent: React.FC = () => {
                         </div>
                         <span className="text-[10px] text-text-muted mt-0.5">
                           {tier.resolutionLabel}
-                          {tier.isHardwareLimited ? " · Auto-downscaled" : ""}
+                          {tier.isHardwareLimited ? " 쨌 Auto-downscaled" : ""}
                         </span>
                       </div>
-                      {previewQuality === tier.value && <span className="text-accent text-xs">✓</span>}
+                      {previewQuality === tier.value && <span className="text-accent text-xs">??/span>}
                     </button>
                   ))}
                   {gpuName && (
@@ -339,7 +339,7 @@ const TimelineToolbarComponent: React.FC = () => {
                 {TIER_SEGMENTS.map(({ tier, left, width }) => (
                   <div key={tier} aria-hidden className={`absolute top-0 h-full ${TIER_BAND_CLASS[tier]}`} style={{ left: `${left}%`, width: `${width}%` }} />
                 ))}
-                <div className="relative h-full rounded-full bg-accent shadow-[0_0_16px_var(--clypra-accent-glow)]" style={{ width: `${zoomProgress}%` }} />
+                <div className="relative h-full rounded-full bg-accent shadow-[0_0_16px_var(--AION-accent-glow)]" style={{ width: `${zoomProgress}%` }} />
               </div>
               <div data-testid="timeline-zoom-thumb" className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent bg-surface" style={{ left: `${zoomThumbLeftPx}px` }} />
             </div>
@@ -355,3 +355,4 @@ const TimelineToolbarComponent: React.FC = () => {
 };
 
 export const TimelineToolbar = React.memo(TimelineToolbarComponent);
+

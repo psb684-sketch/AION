@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Toast Component
  * Animated toast notification with slide-up entry, progress bar, and dismiss support.
  */
@@ -48,7 +48,7 @@ const variantConfig: Record<ToastVariant, { label: string; iconPath: string; acc
 };
 
 export function SuccessToast({ message, variant = "success", onDismiss, autoHideDuration = 3000 }: SuccessToastProps) {
-  // "hidden" → "entering" → "visible" → "leaving"
+  // "hidden" ??"entering" ??"visible" ??"leaving"
   const [phase, setPhase] = useState<"hidden" | "entering" | "visible" | "leaving">("hidden");
   const [progress, setProgress] = useState(100);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -157,7 +157,7 @@ export function SuccessToast({ message, variant = "success", onDismiss, autoHide
             className={`h-full ${cfg.barClass}`}
             style={{
               width: `${progress}%`,
-              boxShadow: "0 0 6px var(--clypra-interaction-focus)",
+              boxShadow: "0 0 6px var(--AION-interaction-focus)",
               transition: "width 100ms linear",
             }}
           />
@@ -166,3 +166,4 @@ export function SuccessToast({ message, variant = "success", onDismiss, autoHide
     </div>
   );
 }
+

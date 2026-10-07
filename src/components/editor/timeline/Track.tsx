@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -177,7 +177,7 @@ const TrackInner: React.FC<TrackProps> = ({
 
   // PERF (0-A / 8-A): Compute active bridge clips only on seek/state-change events,
   // not on every 10fps clock tick. We subscribe to the clock but filter out
-  // continuous time updates — only state transitions and seeks trigger re-evaluation.
+  // continuous time updates ??only state transitions and seeks trigger re-evaluation.
   // During playback, bridge clips stay constant between cuts, so stale-by-one-frame
   // is perfectly acceptable (and far cheaper than 400 re-renders/sec at 10fps x 40 components).
   const activeClipIdsRef = useRef<Set<string>>(new Set<string>());
@@ -564,9 +564,9 @@ const TrackInner: React.FC<TrackProps> = ({
                 width: `${gapWidth}px`,
                 height: "100%",
                 background:
-                  "color-mix(in srgb, var(--clypra-editor-drop) 25%, transparent)",
+                  "color-mix(in srgb, var(--AION-editor-drop) 25%, transparent)",
                 border:
-                  "2px dashed color-mix(in srgb, var(--clypra-editor-drop) 60%, transparent)",
+                  "2px dashed color-mix(in srgb, var(--AION-editor-drop) 60%, transparent)",
                 borderRadius: "4px",
               }}
             />
@@ -656,3 +656,4 @@ const arePropsEqual = (prevProps: TrackProps, nextProps: TrackProps) => {
 };
 
 export const Track = React.memo(TrackInner, arePropsEqual);
+

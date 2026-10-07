@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import {
   Trash2,
   HardDrive,
@@ -354,7 +354,7 @@ export const CacheSettings: React.FC = () => {
             <p className="font-medium">{lastResult.message}</p>
             {lastResult.stats?.errors && lastResult.stats.errors.length > 0 && (
               <ul className="mt-1.5 space-y-0.5 text-[10px] opacity-80">
-                {lastResult.stats.errors.map((error: string, idx: number) => (<li key={idx}>• {error}</li>))}
+                {lastResult.stats.errors.map((error: string, idx: number) => (<li key={idx}>??{error}</li>))}
               </ul>
             )}
           </div>
@@ -363,7 +363,7 @@ export const CacheSettings: React.FC = () => {
 
       {/* General Cache Actions */}
       <section className="space-y-2">
-        {/* Clear All — prominent row */}
+        {/* Clear All ??prominent row */}
         <button
           onClick={() => clearAllCaches({ localStorage: false })}
           disabled={isClearing}
@@ -566,10 +566,10 @@ export const CacheSettings: React.FC = () => {
               onChange={(e) => handleSetFilmstripLimit(e.target.value)}
               className="bg-surface-raised/80 border border-white/10 rounded-lg px-2.5 py-1 text-text-primary text-[11px] focus:outline-none focus:border-accent/40 cursor-pointer"
             >
-              <option value="1">1 GB — Conservative</option>
-              <option value="5">5 GB — Recommended</option>
-              <option value="10">10 GB — High Performance</option>
-              <option value="20">20 GB — Heavy Timeline</option>
+              <option value="1">1 GB ??Conservative</option>
+              <option value="5">5 GB ??Recommended</option>
+              <option value="10">10 GB ??High Performance</option>
+              <option value="20">20 GB ??Heavy Timeline</option>
               <option value="0">Unlimited</option>
             </select>
           </div>
@@ -668,7 +668,7 @@ export const CacheSettings: React.FC = () => {
         </div>
       </section>
 
-      {/* Tips — collapsible */}
+      {/* Tips ??collapsible */}
       <div className="rounded-xl border border-white/6 overflow-hidden bg-surface-raised/20">
         <button
           onClick={() => setTipsExpanded((v) => !v)}
@@ -683,14 +683,14 @@ export const CacheSettings: React.FC = () => {
         {tipsExpanded && (
           <ul className="px-4 pb-4 pt-3 space-y-2 border-t border-white/6">
             {[
-              "Editing 4K+ footage over 30 min? Enable Proxy Editing Mode in Editor → Performance settings.",
+              "Editing 4K+ footage over 30 min? Enable Proxy Editing Mode in Editor ??Performance settings.",
               "Set Preview Resolution to Medium or Proxy for multi-hour timelines to maintain 60 FPS scrub.",
               "Use the cache clear buttons above between long editing sessions to free GPU memory.",
-              "Clypra never loads full video files into RAM — only decoded frames are cached (1 GiB default).",
-              "Long exports run as streaming GPU pipelines — Clypra will not overheat or crash on hour-long exports.",
+              "AION never loads full video files into RAM ??only decoded frames are cached (1 GiB default).",
+              "Long exports run as streaming GPU pipelines ??AION will not overheat or crash on hour-long exports.",
             ].map((tip, i) => (
               <li key={i} className="text-[10px] text-text-muted leading-relaxed flex gap-2">
-                <span className="text-accent shrink-0 mt-0.5">•</span>
+                <span className="text-accent shrink-0 mt-0.5">??/span>
                 <span>{tip}</span>
               </li>
             ))}
@@ -705,3 +705,4 @@ export const CacheSettings: React.FC = () => {
     </div>
   );
 };
+

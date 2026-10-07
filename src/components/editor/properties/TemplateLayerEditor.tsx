@@ -1,8 +1,8 @@
-import React, { useState, useMemo, useEffect } from "react";
+﻿import React, { useState, useMemo, useEffect } from "react";
 import { Type, Square, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ClypraColorPicker } from "@clypra/ui-color-picker";
-import { resolveTextTemplateArtifact } from "@clypra-studio/engine";
+import { ClypraColorPicker } from "@AION/ui-color-picker";
+import { resolveTextTemplateArtifact } from "@AION-studio/engine";
 import { FONT_PICKER_OPTIONS, resolveFontPickerValue } from "./TextStyleSection";
 
 interface TemplateLayerEditorProps {
@@ -336,3 +336,4 @@ export const TemplateLayerEditor: React.FC<TemplateLayerEditorProps> = ({
     </div>
   );
 };
+

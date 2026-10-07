@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Play, Pause, Download, Edit3, X, Eye, EyeOff } from "lucide-react";
 import { useRecordingStore } from "@/store/recordingStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -167,7 +167,7 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
     };
   }, [isDragging, handleGlobalMouseMove, handleGlobalMouseUp]);
 
-  // ── Filmstrip ────────────────────────────────────────────────────────────────
+  // ?? Filmstrip ????????????????????????????????????????????????????????????????
   const filmstripCanvasRef = useRef<HTMLCanvasElement>(null);
   const filmstripDrawnRef = useRef(false);
 
@@ -292,7 +292,7 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
 
         const ext = screenPath.split(".").pop() || "webm";
         const selectedPath = await save({
-          defaultPath: `clypra_recording.${ext}`,
+          defaultPath: `AION_recording.${ext}`,
           filters: [{ name: "Video", extensions: [ext] }],
         });
 
@@ -311,7 +311,7 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
               endSeconds,
             });
           } else {
-            // No trim — fast file copy
+            // No trim ??fast file copy
             const { copyFile } = await import("@tauri-apps/plugin-fs");
             await copyFile(screenPath, selectedPath);
           }
@@ -322,7 +322,7 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
         // Browser fallback (no trim support)
         const a = document.createElement("a");
         a.href = videoSrc;
-        a.download = "clypra_recording.webm";
+        a.download = "AION_recording.webm";
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -343,7 +343,7 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
 
   const handleClose = () => {
     if (showCloseConfirm) {
-      // User confirmed — close
+      // User confirmed ??close
       setShowCloseConfirm(false);
       onClose();
     } else {
@@ -374,8 +374,7 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
         {/* Title bar */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5 bg-[#1a1a26]/50">
           <button onClick={handleClose} className="w-3.5 h-3.5 rounded-full bg-red-500 hover:bg-red-600 transition-colors flex items-center justify-center text-[8px] text-red-950 font-bold">
-            ✕
-          </button>
+            ??          </button>
           <span className="text-sm font-semibold text-slate-300">Screen recording</span>
           <div className="w-4" /> {/* Spacer */}
         </div>
@@ -425,7 +424,7 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
           {/* Trimmer Timeline Slider */}
           <div className="flex flex-col gap-1.5">
             <div className="relative h-10 bg-[#08080f] rounded-md border border-white/8 overflow-hidden" ref={containerRef}>
-              {/* Filmstrip canvas — drawn once from video frames */}
+              {/* Filmstrip canvas ??drawn once from video frames */}
               <canvas
                 ref={filmstripCanvasRef}
                 width={800}
@@ -437,7 +436,7 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
               <div className="absolute top-0 bottom-0 left-0 bg-black/60" style={{ width: `${trimStart}%` }} />
               <div className="absolute top-0 bottom-0 right-0 bg-black/60" style={{ width: `${100 - trimEnd}%` }} />
 
-              {/* Visual Trim Region overlay — accent border showing the selected region */}
+              {/* Visual Trim Region overlay ??accent border showing the selected region */}
               <div
                 className="absolute top-0 bottom-0 border-x-2 border-accent pointer-events-none"
                 style={{
@@ -486,9 +485,9 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
           {/* Trim indicator */}
           {isTrimmed && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/8 border border-accent/20">
-              <span className="text-[11px] text-accent font-semibold">✂ Trimmed</span>
+              <span className="text-[11px] text-accent font-semibold">??Trimmed</span>
               <span className="text-[10px] text-slate-400">
-                {formatTimecode((trimStart / 100) * duration)} → {formatTimecode((trimEnd / 100) * duration)}
+                {formatTimecode((trimStart / 100) * duration)} ??{formatTimecode((trimEnd / 100) * duration)}
               </span>
               <button
                 onClick={() => {
@@ -518,3 +517,4 @@ export const ScreenRecordingPreviewModal: React.FC<ScreenRecordingPreviewModalPr
     </div>
   );
 };
+

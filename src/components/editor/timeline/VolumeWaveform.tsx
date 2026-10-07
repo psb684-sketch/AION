@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+﻿import React, { useEffect, useRef } from "react";
 import type { AudioFadeCurve, AudioKeyframe } from "@/types";
 import { evaluateAudioKeyframes, evaluateFadeCurve } from "@/core/audio/effectiveAudioState";
 import { useWaveformData } from "./useWaveformData";
@@ -28,7 +28,7 @@ const clamp = (value: number, min: number, max: number) =>
 function getVisibleWaveColor(): string {
   if (typeof document !== "undefined") {
     const waveColor = getComputedStyle(document.documentElement)
-      .getPropertyValue("--clypra-clip-audio-wave")
+      .getPropertyValue("--AION-clip-audio-wave")
       .trim();
     if (waveColor) return waveColor;
   }
@@ -185,7 +185,7 @@ export const VolumeWaveform: React.FC<VolumeWaveformProps> = ({
   return (
     <div className="relative flex h-full min-h-0 w-full items-center">
       {isLoading && (
-        <div className="absolute inset-0 animate-pulse bg-clypra-clip-waveform-bg/60" />
+        <div className="absolute inset-0 animate-pulse bg-AION-clip-waveform-bg/60" />
       )}
       <canvas
         ref={canvasRef}
@@ -196,3 +196,4 @@ export const VolumeWaveform: React.FC<VolumeWaveformProps> = ({
     </div>
   );
 };
+

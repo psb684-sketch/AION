@@ -1,8 +1,8 @@
-import React from "react";
+﻿import React from "react";
 import { Palette, Sparkles, Sliders, EyeOff, Check } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import type { CanvasBackgroundConfig } from "@/types";
-import { ClypraColorPicker } from "@clypra/ui-color-picker";
+import { ClypraColorPicker } from "@AION/ui-color-picker";
 
 const QUICK_COLORS = [
   "#000000",
@@ -226,7 +226,7 @@ export const BackgroundInspectorPanel: React.FC = () => {
                   <div className="space-y-1 pt-1">
                     <div className="flex justify-between text-text-muted">
                       <span>Angle</span>
-                      <span>{bgConfig.gradient?.angle ?? 135}°</span>
+                      <span>{bgConfig.gradient?.angle ?? 135}째</span>
                     </div>
                     <input
                       type="range"
@@ -340,3 +340,4 @@ export const BackgroundInspectorPanel: React.FC = () => {
     </div>
   );
 };
+

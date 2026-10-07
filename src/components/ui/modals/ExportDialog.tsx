@@ -1,8 +1,8 @@
-/**
+﻿/**
  * Export Dialog
  *
  * Premium export modal with multi-phase UX:
- *   Configure → Exporting → Complete → Error
+ *   Configure ??Exporting ??Complete ??Error
  *
  * Features:
  * - Two-column layout: preset card sidebar + config/progress panel
@@ -110,7 +110,7 @@ function getQualityTierForPreset(presetKey: ExportPreset) {
   return QUALITY_TIERS[2]; // 4k
 }
 
-// ─── Detail Row ──────────────────────────────────────────────────────────
+// ??? Detail Row ??????????????????????????????????????????????????????????
 
 function DetailRow({
   label,
@@ -149,7 +149,7 @@ function cleanEngineVersion(ver?: string): string {
     .trim();
 }
 
-// ─── Main Export Dialog ──────────────────────────────────────────────────
+// ??? Main Export Dialog ??????????????????????????????????????????????????
 
 export const ExportDialog: React.FC<ExportDialogProps> = ({
   isOpen,
@@ -173,7 +173,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
   const [blockedAudioAssets, setBlockedAudioAssets] = useState<MissingAudioAsset[]>([]);
   const [ffmpegAvailable, setFfmpegAvailable] = useState<boolean | null>(null);
   const [ffmpegVersion, setFfmpegVersion] = useState<string>("");
-  const [mobileExportMode, setMobileExportMode] = useState<"cloud" | "clypra">("cloud");
+  const [mobileExportMode, setMobileExportMode] = useState<"cloud" | "AION">("cloud");
 
   // Project Rename State
   const [isEditingName, setIsEditingName] = useState(false);
@@ -186,7 +186,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
   // FIX (BUG-C2): Stores the live cancel function provided by exportVideo() once the
   // FFmpeg session is started. Calling it kills the backend process and stops the
-  // frame loop — previously the cancel button only reset the UI without stopping FFmpeg.
+  // frame loop ??previously the cancel button only reset the UI without stopping FFmpeg.
   const cancelExportFnRef = useRef<(() => Promise<void>) | null>(null);
 
   const selectedPreset = PRESET_CONFIGS[preset];
@@ -222,7 +222,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
   const { width: resolvedWidth, height: resolvedHeight } =
     resolveExportDimensions(projectW, projectH, qualityTier);
 
-  // ─── Component Lifecycle & Unmount Teardown ────────────────────────
+  // ??? Component Lifecycle & Unmount Teardown ????????????????????????
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -253,7 +253,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     if (isMountedRef.current) setResult(r);
   }, []);
 
-  // ─── Reset state on open ───────────────────────────────────────────
+  // ??? Reset state on open ???????????????????????????????????????????
   useEffect(() => {
     if (isOpen) {
       setPhase("configure");
@@ -270,7 +270,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     }
   }, [isOpen]);
 
-  // ─── FFmpeg check ──────────────────────────────────────────────────
+  // ??? FFmpeg check ??????????????????????????????????????????????????
   useEffect(() => {
     if (!isOpen) return;
 
@@ -300,12 +300,12 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     checkFFmpeg();
   }, [isOpen]);
 
-  // ─── Sequence duration (actual authored content) ───────────────────
+  // ??? Sequence duration (actual authored content) ???????????????????
   const sequenceDuration = getTimelineEndTime();
 
-  // ─── Estimated file size ───────────────────────────────────────────
+  // ??? Estimated file size ???????????????????????????????????????????
   const estimatedFileSize = (() => {
-    if (sequenceDuration <= 0) return "—";
+    if (sequenceDuration <= 0) return "??;
     const bytes =
       (selectedPreset.estimatedBitrateMbps * 1_000_000 * sequenceDuration) / 8;
     if (bytes < 1_000_000) return `~${(bytes / 1_000).toFixed(0)} KB`;
@@ -313,7 +313,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     return `~${(bytes / 1_000_000_000).toFixed(2)} GB`;
   })();
 
-  // ─── Format helpers ────────────────────────────────────────────────
+  // ??? Format helpers ????????????????????????????????????????????????
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -335,7 +335,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     return `${(ms / 1000).toFixed(1)}s`;
   };
 
-  // ─── Project Rename Handlers ───────────────────────────────────────
+  // ??? Project Rename Handlers ???????????????????????????????????????
   const handleSaveName = useCallback(async () => {
     if (!project) return;
     const trimmed = editNameValue.trim();
@@ -363,7 +363,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     setIsEditingName(false);
   }, []);
 
-  // ─── Output path picker ───────────────────────────────────────────
+  // ??? Output path picker ???????????????????????????????????????????
   const handleSelectOutputPath = useCallback(async () => {
     try {
       const { save } = await import("@tauri-apps/plugin-dialog");
@@ -378,7 +378,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     }
   }, [project?.name, selectedPreset.codecValue]);
 
-  // ─── Mobile Project Export Handler ──────────────────────────────────
+  // ??? Mobile Project Export Handler ??????????????????????????????????
   const handleExportProjectFile = useCallback(async () => {
     if (!project) return;
     try {
@@ -400,7 +400,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${project.name || "video-project"}.clypra`;
+      a.download = `${project.name || "video-project"}.AION`;
       a.click();
       URL.revokeObjectURL(url);
 
@@ -411,7 +411,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     }
   }, [project, tracks, clips, transitions, mediaAssets, onClose]);
 
-  // ─── Mobile Cloud Export Handler ────────────────────────────────────
+  // ??? Mobile Cloud Export Handler ????????????????????????????????????
   const handleCloudExport = useCallback(async () => {
     if (!project) return;
     setPhase("exporting");
@@ -459,7 +459,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     }
   }, [project, clips, tracks, transitions, mediaAssets, sequenceDuration, recordCompletedExport]);
 
-  // ─── Mobile capabilities check ─────────────────────────────────────
+  // ??? Mobile capabilities check ?????????????????????????????????????
   useEffect(() => {
     if (!isOpen) return;
 
@@ -471,18 +471,18 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
           if (cloudAvailable) {
             setMobileExportMode("cloud");
           } else {
-            setMobileExportMode("clypra");
+            setMobileExportMode("AION");
           }
         } catch (err) {
           console.error("[ExportDialog] Capability check failed:", err);
-          setMobileExportMode("clypra");
+          setMobileExportMode("AION");
         }
       };
       checkMobileCapabilities();
     }
   }, [isOpen]);
 
-  // ─── Export handler ────────────────────────────────────────────────
+  // ??? Export handler ????????????????????????????????????????????????
   const handleExport = useCallback(async (forceWithBaseTypography: boolean = false) => {
     if (!outputPath || !project) return;
 
@@ -673,7 +673,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     toast.info("Export cancelled");
   }, [safeSetPhase, safeSetProgress]);
 
-  // ─── Reveal in Finder ──────────────────────────────────────────────
+  // ??? Reveal in Finder ??????????????????????????????????????????????
   const handleRevealInFinder = useCallback(async () => {
     if (!outputPath) return;
     try {
@@ -685,7 +685,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     }
   }, [outputPath]);
 
-  // ─── Reset for another export ──────────────────────────────────────
+  // ??? Reset for another export ??????????????????????????????????????
   const handleExportAnother = useCallback(() => {
     setPhase("configure");
     setProgress(null);
@@ -694,14 +694,14 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     setOutputPath("");
   }, []);
 
-  // ─── Truncated path display ────────────────────────────────────────
+  // ??? Truncated path display ????????????????????????????????????????
   const displayPath = outputPath
     ? outputPath.length > 45
-      ? "…" + outputPath.slice(-42)
+      ? "?? + outputPath.slice(-42)
       : outputPath
     : "";
 
-  // ─── Can export check ─────────────────────────────────────────────
+  // ??? Can export check ?????????????????????????????????????????????
   const canExport =
     ffmpegAvailable === true &&
     outputPath.length > 0 &&
@@ -716,7 +716,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
       size="lg"
     >
       <div className="flex flex-col md:flex-row min-h-[400px]">
-        {/* ─── Left Sidebar: Preset Cards ─────────────────────────── */}
+        {/* ??? Left Sidebar: Preset Cards ??????????????????????????? */}
         <div className="w-full md:w-[200px] shrink-0 border-b md:border-b-0 md:border-r border-white/6 p-3 flex flex-row md:flex-col gap-2 overflow-x-auto scrollbar-none items-center md:items-stretch">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted px-0.5 hidden md:block">
             Export Preset
@@ -727,7 +727,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             const resolved = resolveExportDimensions(projectW, projectH, tier);
             const dynamicConfig = {
               ...PRESET_CONFIGS[key],
-              resolution: `${resolved.width}×${resolved.height}`,
+              resolution: `${resolved.width}횞${resolved.height}`,
             };
             return (
               <ExportPresetCard
@@ -741,15 +741,14 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             );
           })}
 
-          {/* Media Engine status — bottom of sidebar */}
+          {/* Media Engine status ??bottom of sidebar */}
           {!platform.isCapacitor() && (
             <div className="hidden md:block mt-auto pt-3 border-t border-white/6">
               {ffmpegAvailable === null && (
                 <div className="flex items-center gap-2 px-1">
                   <div className="w-2 h-2 rounded-full bg-text-muted/30 animate-pulse" />
                   <span className="text-[10px] text-text-muted">
-                    Checking export engine…
-                  </span>
+                    Checking export engine??                  </span>
                 </div>
               )}
               {ffmpegAvailable === true && (
@@ -759,8 +758,8 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                     className="text-[10px] text-text-muted truncate"
                     title={
                       cleanEngineVersion(ffmpegVersion)
-                        ? `Clypra Media Engine (Bundled · v${cleanEngineVersion(ffmpegVersion)})`
-                        : "Clypra Media Engine (Bundled)"
+                        ? `AION Media Engine (Bundled 쨌 v${cleanEngineVersion(ffmpegVersion)})`
+                        : "AION Media Engine (Bundled)"
                     }
                   >
                     {cleanEngineVersion(ffmpegVersion)
@@ -777,7 +776,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                       Export engine unavailable
                     </span>
                     <span className="text-[9px] text-text-muted leading-tight block mt-0.5">
-                      Please restart Clypra
+                      Please restart AION
                     </span>
                   </div>
                 </div>
@@ -786,9 +785,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
           )}
         </div>
 
-        {/* ─── Right Panel ────────────────────────────────────────── */}
+        {/* ??? Right Panel ?????????????????????????????????????????? */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* ═══ PHASE: Configure ═══ */}
+          {/* ?먥븧??PHASE: Configure ?먥븧??*/}
           {phase === "configure" && (
             <>
               <div className="flex-1 p-5 space-y-5 overflow-y-auto">
@@ -863,7 +862,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                       />
                       <DetailRow
                         label="Canvas"
-                        value={`${project.canvasWidth}×${project.canvasHeight}`}
+                        value={`${project.canvasWidth}횞${project.canvasHeight}`}
                         icon={Monitor}
                       />
                       <DetailRow
@@ -882,7 +881,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   <div className="rounded-lg border border-white/6 bg-white/2 p-3 space-y-0.5">
                     <DetailRow
                       label="Resolution"
-                      value={`${resolvedWidth}×${resolvedHeight}`}
+                      value={`${resolvedWidth}횞${resolvedHeight}`}
                       icon={Monitor}
                     />
                     <DetailRow
@@ -932,7 +931,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                         </div>
                       </div>
                     )}
-                    {mobileExportMode === "clypra" && (
+                    {mobileExportMode === "AION" && (
                       <div className="rounded-lg border border-amber-500/20 bg-amber-500/2 p-4 flex gap-3 items-start">
                         <Download className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                         <div>
@@ -942,7 +941,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                           <p className="text-[11px] text-text-muted leading-relaxed">
                             On-device encoding and Cloud Rendering are currently
                             unavailable. You can export the project metadata
-                            file (.clypra) and open it on Clypra Desktop to
+                            file (.AION) and open it on AION Desktop to
                             render it at full quality.
                           </p>
                         </div>
@@ -960,7 +959,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                       >
                         <FolderOpen className="w-3.5 h-3.5 shrink-0 text-text-muted" />
                         <span className="truncate">
-                          {displayPath || "No output file selected…"}
+                          {displayPath || "No output file selected??}
                         </span>
                       </div>
                       <Button
@@ -1028,7 +1027,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                       </p>
                       <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
                         The video export engine could not be initialized. Please
-                        restart Clypra or contact support if the issue persists.
+                        restart AION or contact support if the issue persists.
                       </p>
                     </div>
                   </div>
@@ -1076,15 +1075,14 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             </>
           )}
 
-          {/* ═══ PHASE: Exporting ═══ */}
+          {/* ?먥븧??PHASE: Exporting ?먥븧??*/}
           {phase === "exporting" && (
             <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-6">
               <ProgressRing progress={progress?.progress || 0} />
 
               <div className="w-full max-w-[320px] text-center space-y-3">
                 <h3 className="text-[15px] font-semibold text-text-primary tracking-tight">
-                  Exporting Video…
-                </h3>
+                  Exporting Video??                </h3>
 
                 {progress && (
                   <div className="space-y-2">
@@ -1148,7 +1146,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             </div>
           )}
 
-          {/* ═══ PHASE: Complete ═══ */}
+          {/* ?먥븧??PHASE: Complete ?먥븧??*/}
           {phase === "complete" && (
             <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-6 overflow-y-auto">
               <SuccessCheck />
@@ -1263,7 +1261,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             </div>
           )}
 
-          {/* ═══ PHASE: Error ═══ */}
+          {/* ?먥븧??PHASE: Error ?먥븧??*/}
           {phase === "error" && (
             <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-5">
               <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center text-destructive">
@@ -1308,7 +1306,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             </div>
           )}
 
-          {/* ═══ PHASE: Blocked - Missing Dependencies ═══ */}
+          {/* ?먥븧??PHASE: Blocked - Missing Dependencies ?먥븧??*/}
           {phase === "blocked-missing-effects" && (
             <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-5 overflow-y-auto">
               <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500">
@@ -1321,7 +1319,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                     Export Blocked: Missing Dependencies
                   </h3>
                   <p className="text-[11px] text-text-muted mt-1 leading-relaxed">
-                    Clypra prevents silent visual degradation and missing image content.
+                    AION prevents silent visual degradation and missing image content.
                     {blockedImageAssets.length > 0 || blockedAudioAssets.length > 0
                       ? " Restore the missing media assets below before exporting; media cannot be force-exported."
                       : " Restore the dependencies below before exporting, or explicitly force-export with base typography."}
@@ -1385,3 +1383,4 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     </Modal>
   );
 };
+

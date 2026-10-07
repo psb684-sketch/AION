@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import {
   Sparkles,
   MessageSquare,
@@ -51,10 +51,10 @@ const generateContextualCaptions = (
     combined.includes("wav")
   ) {
     return [
-      "🎶 [Upbeat melodic intro music]",
-      "🔊 [Bass drop and rhythm shifts]",
-      "🎵 [Vibrant electronic chords swell]",
-      "🎹 [Ambient synth textures sustain]",
+      "?렧 [Upbeat melodic intro music]",
+      "?뵄 [Bass drop and rhythm shifts]",
+      "?렦 [Vibrant electronic chords swell]",
+      "?렫 [Ambient synth textures sustain]",
     ];
   }
 
@@ -226,7 +226,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
 
         if (isTauri) {
           const { invoke } = await import("@tauri-apps/api/core");
-          // ─── 1. AUDIO EXTRACTION ───
+          // ??? 1. AUDIO EXTRACTION ???
           setCaptioningState("analyzing");
           setCaptioningProgress(25);
 
@@ -234,7 +234,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             path: pathStr,
           });
 
-          // ─── 2. LOCAL SPEECH TRANSCRIPTION ───
+          // ??? 2. LOCAL SPEECH TRANSCRIPTION ???
           setCaptioningState("transcribing");
           setCaptioningProgress(60);
 
@@ -247,7 +247,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             throw new Error(result.error);
           }
 
-          // ─── 3. TIMELINE STITCHING ───
+          // ??? 3. TIMELINE STITCHING ???
           setCaptioningState("stitching");
           setCaptioningProgress(90);
 
@@ -256,7 +256,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             timeline.withBatch(() => {
               segments.forEach((seg: any) => {
                 // Whisper timestamps are relative to the audio file.
-                // In Clypra, we need to map them relative to the clip's start time on the timeline,
+                // In AION, we need to map them relative to the clip's start time on the timeline,
                 // adjusting for any trimIn offsets.
                 const relativeStart = seg.start - mediaClip.trimIn;
 
@@ -437,7 +437,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
         }
       }
     } catch (err) {
-      console.error(`[Clypra:TextTab] Failed to load ${type} preview:`, err);
+      console.error(`[AION:TextTab] Failed to load ${type} preview:`, err);
       cancelDownload(itemId);
 
       // Only project fallback if this item is still the active preview target
@@ -491,7 +491,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             {
               id: fullEffect.id,
               name: fullEffect.name,
-              text: fullEffect.text || "CLYPRA",
+              text: fullEffect.text || "AION",
               presetType: "effect",
               styleId: fullEffect.id,
               styleRevisionId: fullEffect.revisionId ?? (fullEffect as any).revision?.revisionId,
@@ -502,7 +502,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             "text",
           );
         } catch (err) {
-          console.error("[Clypra:TextTab] Failed to load effect on first apply:", err);
+          console.error("[AION:TextTab] Failed to load effect on first apply:", err);
           cancelDownload(itemId);
         }
       } else {
@@ -521,12 +521,12 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             "text",
           );
         } catch (err) {
-          console.error("[Clypra:TextTab] Failed to load template on first apply:", err);
+          console.error("[AION:TextTab] Failed to load template on first apply:", err);
           cancelDownload(itemId);
         }
       }
     } else {
-      // Already downloaded — use cache, no network round-trip
+      // Already downloaded ??use cache, no network round-trip
       if (type === "effect") {
         const cachedEffect = useEffectsStore.getState().definitions[itemId];
         const targetEffect: any = cachedEffect || item;
@@ -534,7 +534,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
           {
             id: targetEffect.id,
             name: targetEffect.name,
-            text: targetEffect.text || "CLYPRA",
+            text: targetEffect.text || "AION",
             presetType: "effect",
             styleId: targetEffect.id,
             styleRevisionId: targetEffect.revisionId ?? targetEffect.revision?.revisionId,
@@ -589,13 +589,13 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
       {
         id: effect.id,
         name: effect.name,
-        text: text || "CLYPRA",
+        text: text || "AION",
         presetType: "effect",
         styleId: effect.id,
         styleRevisionId: effect.revisionId ?? effect.revision?.revisionId,
         styleContentHash: effect.contentHash ?? effect.revision?.contentHash,
         styleSnapshot: effect.scene,
-        effectDefinition: effect, // ← Pass the full effect definition
+        effectDefinition: effect, // ??Pass the full effect definition
       },
       "text",
     );
@@ -614,7 +614,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-surface/5 select-none">
-      {/* ── Top Header Control Navigation Row (Overflows X) ────────────── */}
+      {/* ?? Top Header Control Navigation Row (Overflows X) ?????????????? */}
       <div className="flex items-center gap-2.5 p-1 border-b border-border/50 shrink-0 bg-surface/10">
         <Button
           variant="ghost"
@@ -658,7 +658,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
         </div>
       </div>
 
-      {/* ── Effects search bar (only shown on effects tab) ── */}
+      {/* ?? Effects search bar (only shown on effects tab) ?? */}
       {activeTab === "effects" && (
         <div className="shrink-0 px-2 py-1.5 border-b border-border/30">
           <div className="relative flex items-center">
@@ -667,7 +667,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
               type="text"
               value={effectsSearch}
               onChange={(e) => setEffectsSearch(e.target.value)}
-              placeholder="Search effects…"
+              placeholder="Search effects??
               className="w-full bg-surface-raised/40 border border-border/40 rounded-md pl-6 pr-6 py-1 text-[11px] text-text-primary placeholder:text-text-muted/50 outline-none focus:border-accent/40 transition-colors"
             />
             {effectsSearch && (
@@ -682,10 +682,10 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
         </div>
       )}
 
-      {/* ── Main content Scrollable Grid area ───────────────────────── */}
+      {/* ?? Main content Scrollable Grid area ????????????????????????? */}
       <div className="grow overflow-y-auto scrollbar-thin">
         <>
-          {/* Yours/Favorites — rendered by TemplateGrid filtered to favorites */}
+          {/* Yours/Favorites ??rendered by TemplateGrid filtered to favorites */}
           {activeTab === "yours" && (
             <div className="p-2">
               <h4 className="text-xs font-semibold text-text-muted mb-2.5 uppercase tracking-wide">
@@ -711,7 +711,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             />
           )}
 
-          {/* Templates Display Grid — per-category fetch via TemplateGrid */}
+          {/* Templates Display Grid ??per-category fetch via TemplateGrid */}
           {activeTab === "templates" && (
             <TemplateGrid
               onPreview={(template) => handlePreview(template, "template")}
@@ -744,8 +744,8 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
                     </label>
                     <select className="w-full bg-surface-raised border border-border rounded-md px-2.5 py-1.5 text-text-primary text-xs outline-none">
                       <option value="en">English (US)</option>
-                      <option value="es">Español</option>
-                      <option value="fr">Français</option>
+                      <option value="es">Espa챰ol</option>
+                      <option value="fr">Fran챌ais</option>
                       <option value="de">Deutsch</option>
                     </select>
                   </div>
@@ -806,7 +806,7 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
                       "Stitching Subtitle Track..."}
                   </div>
                   <div className="text-[10px] text-text-muted">
-                    Please keep Clypra open. This process runs locally.
+                    Please keep AION open. This process runs locally.
                   </div>
                 </div>
 
@@ -852,3 +852,4 @@ export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
     </div>
   );
 };
+

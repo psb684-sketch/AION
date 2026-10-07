@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 
 /**
  * Shown when the native preview cannot initialize. The desktop editor does
@@ -40,9 +40,10 @@ export const WebGLUnavailableError: React.FC = () => {
         Preview is unavailable
       </p>
       <p style={{ fontSize: "13px", margin: 0, color: "#9ca3af", maxWidth: "320px", lineHeight: 1.5 }}>
-        Clypra could not initialize the native preview. Please check your graphics
+        AION could not initialize the native preview. Please check your graphics
         drivers and restart the editor.
       </p>
     </div>
   );
 };
+

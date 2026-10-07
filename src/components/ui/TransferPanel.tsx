@@ -1,15 +1,15 @@
-/**
+﻿/**
  * TransferPanel
  *
- * Bidirectional Phone ↔ Laptop file transfer UI, built on top of the native Rust
+ * Bidirectional Phone ??Laptop file transfer UI, built on top of the native Rust
  * LocalSend-compatible server and Web Hub.
  *
  * Capabilities:
- *   1. Send to Phone (Laptop → Phone):
+ *   1. Send to Phone (Laptop ??Phone):
  *      - Stage files on desktop.
  *      - Real scannable QR code for zero-install mobile browser download.
  *      - Direct peer-to-peer push transfer to discovered LocalSend phones.
- *   2. Receive from Phone (Phone → Laptop):
+ *   2. Receive from Phone (Phone ??Laptop):
  *      - Real scannable QR code for zero-install mobile browser upload.
  *      - LocalSend v2 inbound receiver with consent prompt and real-time progress.
  *      - 1-click "Add to Project" import.
@@ -57,7 +57,7 @@ import { platform } from "@/core/platform";
 const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-// ── Tauri IPC helpers ─────────────────────────────────────────────────────────
+// ?? Tauri IPC helpers ?????????????????????????????????????????????????????????
 
 async function invokeTransfer<T>(
   cmd: string,
@@ -77,7 +77,7 @@ async function listenEvent(
   return listen(event, (e) => handler(e.payload));
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ?? Types ?????????????????????????????????????????????????????????????????????
 
 interface StagedFile {
   id: string;
@@ -161,7 +161,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-// ── QR Code Renderer (SVG from Rust backend) ──────────────────────────────────
+// ?? QR Code Renderer (SVG from Rust backend) ??????????????????????????????????
 
 function QRCodeSVG({
   svg,
@@ -192,7 +192,7 @@ function QRCodeSVG({
         ) : (
           <div className="flex flex-col items-center gap-2 text-zinc-400">
             <Loader2 className="w-6 h-6 animate-spin text-accent" />
-            <span className="text-[11px]">Generating QR…</span>
+            <span className="text-[11px]">Generating QR??/span>
           </div>
         )}
       </div>
@@ -222,7 +222,7 @@ function QRCodeSVG({
   );
 }
 
-// ── Props ─────────────────────────────────────────────────────────────────────
+// ?? Props ?????????????????????????????????????????????????????????????????????
 
 interface TransferPanelProps {
   isOpen: boolean;
@@ -232,7 +232,7 @@ interface TransferPanelProps {
   initialTab?: "send" | "receive" | "guide";
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+// ?? Main Component ????????????????????????????????????????????????????????????
 
 export const TransferPanel: React.FC<TransferPanelProps> = ({
   isOpen,
@@ -287,7 +287,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
   const unlistenRefs = useRef<Array<() => void>>([]);
   const pollIntervalRef = useRef<any>(null);
 
-  // ── Server lifecycle & initialization ───────────────────────────────────────
+  // ?? Server lifecycle & initialization ???????????????????????????????????????
 
   const loadStaged = useCallback(async () => {
     if (!isTauri) return;
@@ -441,14 +441,14 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
     }
   }, [uiTheme, fontFamily, isOpen]);
 
-  // ── Event listeners ─────────────────────────────────────────────────────────
+  // ?? Event listeners ?????????????????????????????????????????????????????????
 
   useEffect(() => {
     if (!isOpen || !isTauri) return;
 
     const setup = async () => {
       const unlistenIncoming = await listenEvent(
-        "clypra://transfer-incoming",
+        "AION://transfer-incoming",
         (payload: any) => {
           setConsentRequest({
             sessionId: payload.sessionId,
@@ -461,7 +461,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
       );
 
       const unlistenProgress = await listenEvent(
-        "clypra://transfer-progress",
+        "AION://transfer-progress",
         (payload: ProgressEvent) => {
           setProgress((prev) => ({
             ...prev,
@@ -474,7 +474,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
       );
 
       const unlistenComplete = await listenEvent(
-        "clypra://transfer-complete",
+        "AION://transfer-complete",
         (payload: CompleteEvent) => {
           setSessions((prev) =>
             prev.map((s) =>
@@ -491,7 +491,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
       );
 
       const unlistenCancelled = await listenEvent(
-        "clypra://transfer-cancelled",
+        "AION://transfer-cancelled",
         (payload: { sessionId: string }) => {
           setSessions((prev) =>
             prev.map((s) =>
@@ -504,7 +504,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
       );
 
       const unlistenOutProgress = await listenEvent(
-        "clypra://transfer-outbound-progress",
+        "AION://transfer-outbound-progress",
         (payload: OutboundProgressEvent) => {
           setOutboundProgress({
             sent: payload.bytesSent,
@@ -515,9 +515,9 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
       );
 
       const unlistenOutComplete = await listenEvent(
-        "clypra://transfer-outbound-complete",
+        "AION://transfer-outbound-complete",
         () => {
-          setOutboundStatus("✅ Sent successfully to remote device!");
+          setOutboundStatus("??Sent successfully to remote device!");
           setTimeout(() => {
             setOutboundProgress(null);
             setOutboundStatus(null);
@@ -542,7 +542,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
     };
   }, [isOpen]);
 
-  // ── Staged files actions ────────────────────────────────────────────────────
+  // ?? Staged files actions ????????????????????????????????????????????????????
 
   const handlePickFiles = async () => {
     if (!isTauri) return;
@@ -583,7 +583,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
 
   const handleSendToPeer = async (device: DiscoveredDevice) => {
     if (stagedFiles.length === 0) return;
-    setOutboundStatus(`Sending to ${device.alias}…`);
+    setOutboundStatus(`Sending to ${device.alias}??);
     setOutboundProgress({
       sent: 0,
       total: stagedFiles.reduce((acc, f) => acc + f.size, 0),
@@ -602,7 +602,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
     }
   };
 
-  // ── Consent actions ─────────────────────────────────────────────────────────
+  // ?? Consent actions ?????????????????????????????????????????????????????????
 
   const handleAccept = useCallback(async (req: ConsentRequest) => {
     try {
@@ -658,9 +658,9 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
       <div
         className="relative w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col overflow-hidden text-text-primary"
         style={{
-          background: "var(--clypra-surface-panel, #15151c)",
+          background: "var(--AION-surface-panel, #15151c)",
           border:
-            "1px solid color-mix(in srgb, var(--clypra-text-primary, #fff) 12%, transparent)",
+            "1px solid color-mix(in srgb, var(--AION-text-primary, #fff) 12%, transparent)",
           maxHeight: "88vh",
         }}
       >
@@ -680,7 +680,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                 </span>
               </div>
               <p className="text-xs text-text-muted">
-                Laptop ↔ Mobile Phone · No cloud · Full quality
+                Laptop ??Mobile Phone 쨌 No cloud 쨌 Full quality
               </p>
             </div>
           </div>
@@ -752,7 +752,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                   className="font-mono text-xs font-semibold text-text-primary truncate"
                   title={saveDirectory}
                 >
-                  {saveDirectory || "Default: ~/Downloads/Clypra Transfers"}
+                  {saveDirectory || "Default: ~/Downloads/AION Transfers"}
                 </p>
               </div>
             </div>
@@ -770,8 +770,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                 className="px-2.5 py-1 rounded-lg bg-accent/20 hover:bg-accent text-accent hover:text-white text-[11px] font-semibold border border-accent/30 transition-colors cursor-pointer"
                 title="Choose custom folder on your system"
               >
-                Change…
-              </button>
+                Change??              </button>
             </div>
           </div>
         </div>
@@ -782,7 +781,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
             <div className="flex items-center gap-2 text-sm text-yellow-400 p-4 rounded-xl bg-yellow-400/10 border border-yellow-400/20">
               <AlertTriangle className="w-5 h-5 shrink-0" />
               <span>
-                Local transfer is only available in the Clypra desktop app.
+                Local transfer is only available in the AION desktop app.
               </span>
             </div>
           ) : serverError ? (
@@ -796,12 +795,12 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
           ) : !serverRunning ? (
             <div className="flex items-center justify-center gap-3 py-12 text-text-muted">
               <Loader2 className="w-5 h-5 animate-spin text-accent" />
-              <span>Starting transfer engine…</span>
+              <span>Starting transfer engine??/span>
             </div>
           ) : activeTab === "send" ? (
-            /* ─────────────────────────────────────────────────────────── */
+            /* ??????????????????????????????????????????????????????????? */
             /* TAB 1: SEND TO PHONE                                       */
-            /* ─────────────────────────────────────────────────────────── */
+            /* ??????????????????????????????????????????????????????????? */
             <div className="space-y-6">
               {/* Quick Connection Tip Banner */}
               <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-accent/10 border border-accent/20 text-xs text-text-primary">
@@ -814,7 +813,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                       Hotspot tip: Keep Mobile Data turned ON on your phone
                     </p>
                     <p className="text-[11px] text-text-muted truncate">
-                      Required for phone routing · 0 MB mobile data is consumed · 100% local Wi-Fi
+                      Required for phone routing 쨌 0 MB mobile data is consumed 쨌 100% local Wi-Fi
                     </p>
                   </div>
                 </div>
@@ -845,7 +844,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                     <ol className="text-xs text-text-muted space-y-1 list-decimal list-inside leading-relaxed">
                       <li>Add files on the right to stage them for your phone.</li>
                       <li>Scan QR code with phone camera to open Web Hub.</li>
-                      <li>Tap <strong>"Download"</strong> or <strong>"View 👁️"</strong>.</li>
+                      <li>Tap <strong>"Download"</strong> or <strong>"View ?몓截?</strong>.</li>
                       <li>If Chrome warns, tap <strong>"Keep"</strong> (it's 100% offline & safe).</li>
                     </ol>
                   </div>
@@ -875,7 +874,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                         className="px-3 flex-1 py-1.5 rounded-md bg-accent text-white text-xs font-semibold hover:bg-accent/90 cursor-pointer flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-accent/20"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Add Files…</span>
+                        <span>Add Files??/span>
                       </button>
                     </div>
                   </div>
@@ -910,7 +909,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                               {file.fileName}
                             </span>
                             <span className="text-[10px] text-text-muted shrink-0">
-                              · {formatBytes(file.size)}
+                              쨌 {formatBytes(file.size)}
                             </span>
                           </div>
                           <button
@@ -930,8 +929,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                     <div className="rounded-xl border border-accent/30 bg-accent/5 p-3 space-y-2">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-semibold text-accent truncate">
-                          Sending {outboundProgress.fileName}…
-                        </span>
+                          Sending {outboundProgress.fileName}??                        </span>
                         <span className="font-mono text-[11px] text-text-muted">
                           {formatBytes(outboundProgress.sent)} /{" "}
                           {formatBytes(outboundProgress.total)}
@@ -979,7 +977,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                       className={`w-3 h-3 ${isScanning ? "animate-spin text-accent" : ""}`}
                     />
                     <span>
-                      {isScanning ? "Scanning WiFi…" : "Scan Network"}
+                      {isScanning ? "Scanning WiFi?? : "Scan Network"}
                     </span>
                   </button>
                 </div>
@@ -1029,9 +1027,9 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
               </div>
             </div>
           ) : activeTab === "receive" ? (
-            /* ─────────────────────────────────────────────────────────── */
+            /* ??????????????????????????????????????????????????????????? */
             /* TAB 2: RECEIVE FROM PHONE                                  */
-            /* ─────────────────────────────────────────────────────────── */
+            /* ??????????????????????????????????????????????????????????? */
             <div className="space-y-6">
               {/* Quick Connection Tip Banner */}
               <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-accent/10 border border-accent/20 text-xs text-text-primary">
@@ -1044,7 +1042,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                       Hotspot tip: Keep Mobile Data turned ON on your phone
                     </p>
                     <p className="text-[11px] text-text-muted truncate">
-                      Required for phone routing · 0 MB mobile data is consumed · 100% local Wi-Fi
+                      Required for phone routing 쨌 0 MB mobile data is consumed 쨌 100% local Wi-Fi
                     </p>
                   </div>
                 </div>
@@ -1086,8 +1084,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                         ))}
                         {consentRequest.files.length > 3 && (
                           <p className="text-[11px] text-text-muted/60">
-                            +{consentRequest.files.length - 3} more files…
-                          </p>
+                            +{consentRequest.files.length - 3} more files??                          </p>
                         )}
                       </div>
                     </div>
@@ -1115,7 +1112,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                   <QRCodeSVG
                     svg={qrCodeSvg}
                     url={serverUrl}
-                    subtitle="Scan with Phone Camera to upload directly into Clypra"
+                    subtitle="Scan with Phone Camera to upload directly into AION"
                   />
                 </div>
 
@@ -1128,11 +1125,11 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                     <ol className="text-xs text-text-muted space-y-1.5 list-decimal list-inside leading-relaxed">
                       <li>Point your phone camera at the QR code.</li>
                       <li>
-                        Tap the link banner to open Clypra Web Hub in browser.
+                        Tap the link banner to open AION Web Hub in browser.
                       </li>
                       <li>
                         Select photos or 4K videos and tap{" "}
-                        <strong>"Send to Clypra"</strong>.
+                        <strong>"Send to AION"</strong>.
                       </li>
                       <li>Accept the transfer prompt on your laptop.</li>
                     </ol>
@@ -1179,7 +1176,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                               {session.senderAlias}
                             </span>
                             <span className="text-[11px] text-text-muted">
-                              · {session.files.length} file
+                              쨌 {session.files.length} file
                               {session.files.length !== 1 ? "s" : ""}
                             </span>
                           </div>
@@ -1335,9 +1332,9 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
               )}
             </div>
           ) : (
-            /* ─────────────────────────────────────────────────────────── */
+            /* ??????????????????????????????????????????????????????????? */
             /* TAB 3: CONNECTION & OFFLINE GUIDE                          */
-            /* ─────────────────────────────────────────────────────────── */
+            /* ??????????????????????????????????????????????????????????? */
             <div className="space-y-6">
               {/* Feature Highlights / Guarantee Banner */}
               <div className="p-4 rounded-xl bg-accent/10 border border-accent/25 space-y-3">
@@ -1402,7 +1399,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                     <li>
                       <strong>No internet required:</strong> Even if your router has no active internet subscription, devices communicate directly over the local network.
                     </li>
-                    <li>Point your phone camera at the QR code in Clypra to start transferring!</li>
+                    <li>Point your phone camera at the QR code in AION to start transferring!</li>
                   </ol>
                 </div>
 
@@ -1437,7 +1434,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                       Android and iOS automatically disable their local network DHCP router and socket bridges if Mobile Data is toggled off. When Mobile Data is off, your phone refuses to assign an IP address or route packets to your laptop.
                     </p>
                     <p className="text-[11px] text-emerald-300 font-medium">
-                      🛡️ <strong>Zero Data Consumption Guarantee:</strong> Even with Mobile Data toggled ON, <strong>0 MB of your cellular data plan is used</strong>. Clypra transfers files strictly over the phone-to-laptop Wi-Fi radio frequencies at up to 80+ MB/s.
+                      ?썳截?<strong>Zero Data Consumption Guarantee:</strong> Even with Mobile Data toggled ON, <strong>0 MB of your cellular data plan is used</strong>. AION transfers files strictly over the phone-to-laptop Wi-Fi radio frequencies at up to 80+ MB/s.
                     </p>
                   </div>
 
@@ -1445,7 +1442,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                     <li>Turn <strong>Mobile Data ON</strong> on your phone.</li>
                     <li>Turn <strong>Personal Hotspot</strong> ON on your phone.</li>
                     <li>Connect your laptop's Wi-Fi to your phone's hotspot.</li>
-                    <li>Scan the QR code in Clypra to send or receive files.</li>
+                    <li>Scan the QR code in AION to send or receive files.</li>
                   </ol>
                 </div>
 
@@ -1475,10 +1472,10 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                     </p>
                     <ul className="space-y-1 list-disc list-inside text-[11px]">
                       <li>
-                        <strong>macOS:</strong> Open <em>System Settings → General → Sharing → Internet Sharing</em>. Turn it on to create a local Wi-Fi hotspot from your Mac.
+                        <strong>macOS:</strong> Open <em>System Settings ??General ??Sharing ??Internet Sharing</em>. Turn it on to create a local Wi-Fi hotspot from your Mac.
                       </li>
                       <li>
-                        <strong>Windows:</strong> Open <em>Settings → Network & Internet → Mobile Hotspot</em>. Toggle it ON.
+                        <strong>Windows:</strong> Open <em>Settings ??Network & Internet ??Mobile Hotspot</em>. Toggle it ON.
                       </li>
                       <li>Connect your phone's Wi-Fi to the laptop's network and scan the QR code.</li>
                     </ul>
@@ -1507,8 +1504,8 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                   </div>
                   <ol className="text-xs text-text-muted space-y-1.5 list-decimal list-inside leading-relaxed pl-1">
                     <li>Connect phone to laptop using a USB-C or Lightning cable.</li>
-                    <li>On phone, open <strong>Settings → Hotspot / Tethering → enable USB Tethering</strong>.</li>
-                    <li>Clypra will detect the wired adapter automatically. Great for transferring 50+ GB 4K footage!</li>
+                    <li>On phone, open <strong>Settings ??Hotspot / Tethering ??enable USB Tethering</strong>.</li>
+                    <li>AION will detect the wired adapter automatically. Great for transferring 50+ GB 4K footage!</li>
                   </ol>
                 </div>
               </div>
@@ -1526,10 +1523,10 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
                       Android Chrome: "File can't be downloaded securely"
                     </p>
                     <p className="text-[11px] leading-relaxed">
-                      Because Clypra runs directly on your private home/hotspot IP (<code className="text-accent">http://192.168.x.x</code>) without routing through public cloud servers, Chrome shows this routine security check. Tap the prompt or 3 dots and select <strong>"Keep"</strong> or <strong>"Download anyway"</strong>.
+                      Because AION runs directly on your private home/hotspot IP (<code className="text-accent">http://192.168.x.x</code>) without routing through public cloud servers, Chrome shows this routine security check. Tap the prompt or 3 dots and select <strong>"Keep"</strong> or <strong>"Download anyway"</strong>.
                     </p>
                     <p className="text-[11px] text-accent">
-                      💡 <em>Alternative:</em> You can also tap <strong>"View 👁️"</strong> in the Clypra mobile web hub to view or stream photos and videos directly in your browser tab without downloading!
+                      ?뮕 <em>Alternative:</em> You can also tap <strong>"View ?몓截?</strong> in the AION mobile web hub to view or stream photos and videos directly in your browser tab without downloading!
                     </p>
                   </div>
 
@@ -1562,7 +1559,7 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
             <span className="font-medium text-text-primary">
-              LAN IP: {localIp || "Detecting…"}
+              LAN IP: {localIp || "Detecting??}
             </span>
             {interfaces.length > 1 && (
               <span className="text-[10px] text-text-muted">
@@ -1579,3 +1576,4 @@ export const TransferPanel: React.FC<TransferPanelProps> = ({
     </div>
   );
 };
+

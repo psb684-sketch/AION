@@ -1,14 +1,14 @@
-/**
+﻿/**
  * Renderer Effects Browser
  *
- * Browse and apply renderer-based effects from @clypra-studio/engine
+ * Browse and apply renderer-based effects from @AION-studio/engine
  */
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Download, Plus, Loader2, Smile, Star } from "lucide-react";
 import { VideoEffectsApi } from "../api/videoEffectsApi";
-import { type EffectMetadata } from "@clypra-studio/engine";
-import type { EffectRenderer as EffectRendererType } from "@clypra-studio/engine";
+import { type EffectMetadata } from "@AION-studio/engine";
+import type { EffectRenderer as EffectRendererType } from "@AION-studio/engine";
 import type { TabType } from "@/components/editor/sidebar";
 import { useFavoritesStore } from "@/store/favoritesStore";
 
@@ -56,7 +56,7 @@ export function RendererEffectsBrowser({ onEffectSelect, onAddToTimeline, showAp
       console.error("Failed to load effects:", error);
       // Fallback to local registry if API fails
       try {
-        const { getEffectsByCategory } = await import("@clypra-studio/engine");
+        const { getEffectsByCategory } = await import("@AION-studio/engine");
         const categoryEffects = getEffectsByCategory(selectedCategory as any);
         setEffects(categoryEffects);
       } catch (fallbackError) {
@@ -261,18 +261,19 @@ function EffectCard({ effect, previewUrl, isFavorite, isDownloaded, isDownloadin
 
 function getCategoryIcon(category: string): string {
   const icons: Record<string, string> = {
-    camera: "🎥",
-    light: "💡",
-    blur: "🌫️",
-    style: "🎨",
-    distortion: "🌀",
-    time: "⏱️",
-    body: "🧍",
-    essentials: "✨",
-    glitch: "📺",
-    retro: "📼",
-    motion: "🌀",
-    color: "🎨",
+    camera: "?렏",
+    light: "?뮕",
+    blur: "?뙧截?,
+    style: "?렓",
+    distortion: "??",
+    time: "?깍툘",
+    body: "?쭕",
+    essentials: "??,
+    glitch: "?벟",
+    retro: "?벣",
+    motion: "??",
+    color: "?렓",
   };
-  return icons[category.toLowerCase()] || icons[category] || "✨";
+  return icons[category.toLowerCase()] || icons[category] || "??;
 }
+

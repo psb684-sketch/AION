@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Main Effects Panel Component
  * Video Effects (renderer-based) and Body Effects only
  */
@@ -7,7 +7,7 @@ import { useState } from "react";
 import { EffectPicker } from "./EffectPicker";
 import { RendererEffectsBrowser } from "./RendererEffectsBrowser";
 import type { EffectPreset } from "../types";
-import type { EffectRenderer as EffectRendererType } from "@clypra-studio/engine";
+import type { EffectRenderer as EffectRendererType } from "@AION-studio/engine";
 import type { TabType } from "@/components/editor/sidebar";
 
 const VIDEO_EFFECT_CATEGORIES = [
@@ -100,3 +100,4 @@ export function EffectsPanel({ onAddToTimeline }: EffectsPanelProps) {
     </div>
   );
 }
+

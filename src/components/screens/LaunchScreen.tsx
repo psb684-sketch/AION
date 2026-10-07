@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+﻿import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   Film,
   Image as ImageIcon,
@@ -73,15 +73,15 @@ const isTauri =
 // Map aspect ratio to a soft accent hue for card hover glow
 const aspectRatioGlow: Record<string, string> = {
   "16:9":
-    "color-mix(in srgb, var(--clypra-interaction-focus) 18%, transparent)",
-  "9:16": "color-mix(in srgb, var(--clypra-clip-caption-bg) 18%, transparent)",
-  "1:1": "color-mix(in srgb, var(--clypra-status-success) 18%, transparent)",
-  "4:3": "color-mix(in srgb, var(--clypra-status-warning) 18%, transparent)",
+    "color-mix(in srgb, var(--AION-interaction-focus) 18%, transparent)",
+  "9:16": "color-mix(in srgb, var(--AION-clip-caption-bg) 18%, transparent)",
+  "1:1": "color-mix(in srgb, var(--AION-status-success) 18%, transparent)",
+  "4:3": "color-mix(in srgb, var(--AION-status-warning) 18%, transparent)",
 };
 
 const getAspectRatioGlow = (ratio: string) =>
   aspectRatioGlow[ratio] ??
-  "color-mix(in srgb, var(--clypra-interaction-focus) 14%, transparent)";
+  "color-mix(in srgb, var(--AION-interaction-focus) 14%, transparent)";
 
 export const LaunchScreen: React.FC<LaunchScreenProps> = ({
   onProjectCreate,
@@ -249,7 +249,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
         console.error("[LaunchScreen] Camera/microphone setup failed:", err);
         setPreviewError(
           err?.message ||
-            "Could not access camera or microphone. Check System Preferences → Privacy.",
+            "Could not access camera or microphone. Check System Preferences ??Privacy.",
         );
       }
     };
@@ -331,7 +331,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
         },
       );
 
-      // Detach preview stream from modal video element — App-level widget will re-attach it
+      // Detach preview stream from modal video element ??App-level widget will re-attach it
       if (previewVideoRef.current) previewVideoRef.current.srcObject = null;
       setIsRecording(true);
       setIsRecordOpen(false);
@@ -484,7 +484,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
         <span
           className={`text-xs font-semibold text-text-muted/60 shrink-0 ${isMacNativeWindow ? "ml-[76px]" : ""}`}
         >
-          Clypra
+          AION
         </span>
         <div
           className="min-w-0 flex-1 self-stretch"
@@ -494,13 +494,13 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
         />
       </div>
 
-      {/* ── Background gradients ─────────────────────────────────── */}
+      {/* ?? Background gradients ??????????????????????????????????? */}
       {/* Primary accent glow */}
       <div
         className="absolute inset-0 pointer-events-none ls-glow-primary"
         style={{
           background:
-            "radial-gradient(ellipse 80% 45% at 50% -5%, var(--clypra-interaction-focus) 0%, transparent 60%)",
+            "radial-gradient(ellipse 80% 45% at 50% -5%, var(--AION-interaction-focus) 0%, transparent 60%)",
         }}
       />
       {/* Warm secondary glow */}
@@ -508,18 +508,18 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
         className="absolute inset-0 pointer-events-none ls-glow-warm"
         style={{
           background:
-            "radial-gradient(ellipse 55% 30% at 80% 10%, var(--clypra-clip-effect-bg) 0%, transparent 60%)",
+            "radial-gradient(ellipse 55% 30% at 80% 10%, var(--AION-clip-effect-bg) 0%, transparent 60%)",
         }}
       />
 
-      {/* ── Content ────────────────────────────────────────────── */}
+      {/* ?? Content ?????????????????????????????????????????????? */}
       <div className="relative z-10 flex-1 flex flex-col w-full px-6 md:px-10 py-8 overflow-y-auto scrollbar-thin">
         {/* Bottom scroll fade overlay */}
         <div
           className="pointer-events-none fixed bottom-0 left-0 right-0 h-16 z-20"
           style={{
             background:
-              "linear-gradient(to top, var(--clypra-surface-app) 0%, transparent 100%)",
+              "linear-gradient(to top, var(--AION-surface-app) 0%, transparent 100%)",
           }}
         />
         {/* Header / Brand */}
@@ -529,14 +529,14 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
               <div className="absolute inset-0 bg-accent/25 blur-2xl rounded-full"></div>
               <div className="absolute inset-0 bg-accent/10 blur-md rounded-full"></div>
               <img
-                src="/clypra.svg"
-                alt="Clypra Logo"
-                className="w-10 h-10 object-contain relative z-10 drop-shadow-[0_0_10px_var(--clypra-interaction-focus)]"
+                src="/AION.svg"
+                alt="AION Logo"
+                className="w-10 h-10 object-contain relative z-10 drop-shadow-[0_0_10px_var(--AION-interaction-focus)]"
               />
             </div>
             <div>
               <h1 className="text-xl font-bold text-text-primary tracking-tight leading-tight">
-                Clypra
+                AION
               </h1>
               <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-accent/10 border border-accent/20 text-[10px] font-semibold text-accent tracking-wider">
                 VIDEO EDITOR
@@ -562,15 +562,15 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
           </div>
         </header>
 
-        {/* ── Hero / New Project ────────────────────────────────── */}
+        {/* ?? Hero / New Project ?????????????????????????????????? */}
         <section className="mb-6">
           <div
             className="relative rounded-2xl overflow-hidden p-8 md:p-10 flex flex-col items-center text-center"
             style={{
               background:
-                "linear-gradient(135deg, var(--clypra-surface-panel) 0%, var(--clypra-surface-app) 100%)",
+                "linear-gradient(135deg, var(--AION-surface-panel) 0%, var(--AION-surface-app) 100%)",
               border:
-                "1px solid color-mix(in srgb, var(--clypra-text-primary) 6%, transparent)",
+                "1px solid color-mix(in srgb, var(--AION-text-primary) 6%, transparent)",
               boxShadow: "var(--elev-shadow)",
             }}
           >
@@ -578,7 +578,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
             <div
               className="absolute top-0 left-1/2 -translate-x-1/2 w-[340px] h-[130px] rounded-full pointer-events-none"
               style={{
-                background: "var(--clypra-interaction-focus)",
+                background: "var(--AION-interaction-focus)",
                 opacity: 0.1,
                 filter: "blur(70px)",
               }}
@@ -587,7 +587,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
             <div
               className="absolute top-0 right-[15%] w-[200px] h-[90px] rounded-full pointer-events-none"
               style={{
-                background: "var(--clypra-clip-effect-bg)",
+                background: "var(--AION-clip-effect-bg)",
                 opacity: 0.06,
                 filter: "blur(55px)",
               }}
@@ -653,7 +653,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
           </div>
         </section>
 
-        {/* ── Quick Actions ─────────────────────────────────────── */}
+        {/* ?? Quick Actions ??????????????????????????????????????? */}
         <section className="mb-10">
           <div className="grid grid-cols-3 gap-3">
             {/* Import Media */}
@@ -674,7 +674,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
               </div>
             </button>
 
-            {/* New from Template — coming soon */}
+            {/* New from Template ??coming soon */}
             <div
               title="Coming soon"
               className="group flex flex-col items-start gap-2 p-4 rounded-xl border border-white/5 bg-surface opacity-50 cursor-not-allowed text-left select-none"
@@ -717,7 +717,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
           </div>
         </section>
 
-        {/* ── Recent Projects ──────────────────────────────────── */}
+        {/* ?? Recent Projects ???????????????????????????????????? */}
         <section className="flex-1 pb-8">
           <div className="flex items-center justify-between gap-2 mb-4">
             <div className="flex items-center gap-2">
@@ -846,7 +846,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
                         </>
                       ) : (
                         <div className="absolute inset-0 bg-gradient-to-br from-surface-raised/80 via-bg to-surface/90 flex flex-col items-center justify-center p-4">
-                          <div className="absolute inset-0 opacity-10 bg-[radial-gradient(var(--clypra-text-primary)_1px,transparent_1px)] [background-size:12px_12px]" />
+                          <div className="absolute inset-0 opacity-10 bg-[radial-gradient(var(--AION-text-primary)_1px,transparent_1px)] [background-size:12px_12px]" />
                           <div className="w-11 h-11 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent font-bold text-sm tracking-wider shadow-lg group-hover:scale-110 transition-transform duration-300">
                             {getProjectInitials(project.name)}
                           </div>
@@ -1037,14 +1037,14 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
         </div>
       </Modal>
 
-      {/* ── Recording Modal ───────────────────────────────── */}
+      {/* ?? Recording Modal ????????????????????????????????? */}
       {isRecordOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 overflow-y-auto">
           <div
             className="w-full max-w-130 max-h-[88vh] rounded-2xl p-5 shadow-2xl flex flex-col gap-3.5 text-slate-100 border border-white/10 overflow-y-auto"
             style={{
               background:
-                "linear-gradient(160deg, var(--clypra-surface-floating) 0%, var(--clypra-surface-app) 100%)",
+                "linear-gradient(160deg, var(--AION-surface-floating) 0%, var(--AION-surface-app) 100%)",
             }}
           >
             {/* Header */}
@@ -1060,8 +1060,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
                 disabled={isRecording}
                 className="text-slate-500 hover:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                ✕
-              </button>
+                ??              </button>
             </div>
 
             {/* Live Preview */}
@@ -1070,7 +1069,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
               {recordOptions.screen && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-app border border-text-primary/5">
                   <div className="flex flex-col items-center justify-center text-slate-500 gap-2">
-                    <span className="text-4xl">🖥️</span>
+                    <span className="text-4xl">?뼢截?/span>
                     <span className="text-xs font-semibold text-slate-400">
                       Screen Capture Enabled
                     </span>
@@ -1103,7 +1102,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
               {/* Placeholder text if neither is active */}
               {!recordOptions.screen && !recordOptions.webcam && (
                 <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 gap-2">
-                  <span className="text-3xl">🎙️</span>
+                  <span className="text-3xl">?럺截?/span>
                   <span className="text-xs font-medium">
                     Recording Audio Only
                   </span>
@@ -1113,20 +1112,19 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
               {/* Camera notice banner */}
               {cameraNotice && (
                 <div className="absolute top-2 left-2 right-2 z-20 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[11px] px-3 py-1.5 rounded-lg flex items-center justify-between backdrop-blur-sm">
-                  <span>📷 {cameraNotice}</span>
+                  <span>?벜 {cameraNotice}</span>
                   <button
                     onClick={() => setCameraNotice(null)}
                     className="text-amber-400 hover:text-amber-200"
                   >
-                    ✕
-                  </button>
+                    ??                  </button>
                 </div>
               )}
 
               {/* Error banner */}
               {previewError && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-8 bg-black/80">
-                  <span className="text-2xl">⚠️</span>
+                  <span className="text-2xl">?좑툘</span>
                   <p className="text-sm text-red-400 leading-relaxed max-w-xs">
                     {previewError}
                   </p>
@@ -1148,10 +1146,10 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
                   {
                     key: "screen" as const,
                     label: "Capture Screen",
-                    icon: "🖥️",
+                    icon: "?뼢截?,
                   },
-                  { key: "webcam" as const, label: "Camera", icon: "📷" },
-                  { key: "audio" as const, label: "Microphone", icon: "🎙️" },
+                  { key: "webcam" as const, label: "Camera", icon: "?벜" },
+                  { key: "audio" as const, label: "Microphone", icon: "?럺截? },
                 ] as const
               ).map(({ key, label, icon }) => (
                 <label
@@ -1272,7 +1270,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
                   <span>Microphone Source</span>
                   {audioDevices.length > 0 && (
                     <span className="text-emerald-400 font-bold flex items-center gap-1.5 animate-pulse">
-                      ● Live Testing
+                      ??Live Testing
                     </span>
                   )}
                 </div>
@@ -1303,7 +1301,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
                           style={{
                             width: "0%",
                             background:
-                              "linear-gradient(90deg, var(--clypra-status-success) 0%, var(--clypra-status-success) 70%, var(--clypra-status-warning) 85%, var(--clypra-status-error) 100%)",
+                              "linear-gradient(90deg, var(--AION-status-success) 0%, var(--AION-status-success) 70%, var(--AION-status-warning) 85%, var(--AION-status-error) 100%)",
                           }}
                         />
                       </div>
@@ -1348,7 +1346,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
         </div>
       )}
 
-      {/* ── Camera Recording Modal ──────────────────────────────── */}
+      {/* ?? Camera Recording Modal ???????????????????????????????? */}
       <CameraRecordingModal
         onRecordingComplete={(filePath, aspectRatio) => {
           const { defaultFrameRate } = useSettingsStore.getState();
@@ -1360,3 +1358,4 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
     </div>
   );
 };
+

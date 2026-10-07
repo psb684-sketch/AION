@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import { Check, Palette, SlidersHorizontal, Info, Paintbrush, RotateCcw, Copy, Download, Upload, HardDrive, Captions, RefreshCw, Keyboard, Activity } from "lucide-react";
 import { platform } from "@/core/platform";
 import { Modal } from "../primitives/Modal";
@@ -13,7 +13,7 @@ import { isTauriDesktop } from "@/services/updaterService";
 import { useAutoUpdater } from "@/hooks/useAutoUpdater";
 import { useI18n } from "@/i18n/I18nProvider";
 import { getVersion } from "@tauri-apps/api/app";
-import { ClypraColorPicker } from "@clypra/ui-color-picker";
+import { ClypraColorPicker } from "@AION/ui-color-picker";
 import { toast } from "@/lib/toast";
 import { PreviewDiagnosticsTab } from "@/components/settings/PreviewDiagnosticsTab";
 
@@ -34,7 +34,7 @@ const TABS: { id: Tab; label: string; icon: React.FC<{ className?: string }> }[]
   { id: "about", label: "About", icon: Info },
 ];
 
-// ─── Enhanced theme preview with timeline ────────────────────────────────
+// ??? Enhanced theme preview with timeline ????????????????????????????????
 function ThemeSwatch({ themeId, selected, onSelect, customColors, clipPalette = "dark" }: { themeId: Theme; selected: boolean; onSelect: () => void; customColors?: Record<string, string> | null; clipPalette?: ClipPalette }) {
   const colors = getThemeColors(themeId, customColors, clipPalette);
   const meta = THEME_META[themeId];
@@ -156,7 +156,7 @@ function ClipPaletteSwatch({ palette, selected, onSelect }: { palette: ClipPalet
   );
 }
 
-// ─── Custom Theme Editor ─────────────────────────────────────────────────
+// ??? Custom Theme Editor ?????????????????????????????????????????????????
 function CustomThemeEditor() {
   const { customTheme, setCustomTheme, resetCustomTheme } = useSettingsStore();
   const [baseTheme, setBaseTheme] = useState<Exclude<Theme, "custom">>("dark");
@@ -213,7 +213,7 @@ function CustomThemeEditor() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `clypra-theme-${Date.now()}.json`;
+    a.download = `AION-theme-${Date.now()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -358,7 +358,7 @@ function CustomThemeEditor() {
   );
 }
 
-// ─── Appearance Tab ──────────────────────────────────────────────────────
+// ??? Appearance Tab ??????????????????????????????????????????????????????
 function AppearanceTab() {
   const { theme, uiTheme, clipPalette, fontFamily, customTheme, setTheme, setUiTheme, setClipPalette, setFontFamily } = useSettingsStore();
   const { language, setLanguage } = useI18n();
@@ -371,7 +371,7 @@ function AppearanceTab() {
     <div className="space-y-7">
       <section>
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-3">Language</h3>
-        <SettingRow label="Interface language" description="Choose the language used throughout Clypra">
+        <SettingRow label="Interface language" description="Choose the language used throughout AION">
           <select value={language} onChange={(event) => setLanguage(event.target.value as "en" | "zh-TW" | "zh-CN")} aria-label="Interface language" className="px-3 py-1.5 text-[11px] rounded-lg bg-surface-raised border border-white/6 text-text-primary focus:outline-none focus:border-accent/40">
             <option value="en">English</option>
             <option value="zh-TW">Traditional Chinese</option>
@@ -436,7 +436,7 @@ function AppearanceTab() {
   );
 }
 
-// ─── Editor Tab ──────────────────────────────────────────────────────────
+// ??? Editor Tab ??????????????????????????????????????????????????????????
 function EditorTab() {
   const {
     snapToGrid,
@@ -462,11 +462,11 @@ function EditorTab() {
   ];
 
   const aspectRatios: Array<{ value: string; label: string; dimensions: string }> = [
-    { value: "16:9", label: "16:9", dimensions: "1920×1080" },
-    { value: "9:16", label: "9:16", dimensions: "1080×1920" },
-    { value: "1:1", label: "1:1", dimensions: "1080×1080" },
-    { value: "4:3", label: "4:3", dimensions: "1440×1080" },
-    { value: "21:9", label: "21:9", dimensions: "2520×1080" },
+    { value: "16:9", label: "16:9", dimensions: "1920횞1080" },
+    { value: "9:16", label: "9:16", dimensions: "1080횞1920" },
+    { value: "1:1", label: "1:1", dimensions: "1080횞1080" },
+    { value: "4:3", label: "4:3", dimensions: "1440횞1080" },
+    { value: "21:9", label: "21:9", dimensions: "2520횞1080" },
   ];
 
   const handleAspectRatioChange = (aspectRatio: string) => {
@@ -475,7 +475,7 @@ function EditorTab() {
     const dims = aspectRatios.find((ar) => ar.value === aspectRatio);
     if (!dims) return;
 
-    const [width, height] = dims.dimensions.split("×").map(Number);
+    const [width, height] = dims.dimensions.split("횞").map(Number);
     const oldW = project.canvasWidth;
     const oldH = project.canvasHeight;
 
@@ -504,7 +504,7 @@ function EditorTab() {
 
       {/* Performance */}
       <section className="rounded-xl bg-surface-raised/40 border border-white/5 p-4 space-y-3">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">⚡ Performance & Proxies</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">??Performance & Proxies</h3>
         <div className="space-y-3">
           <SettingRow
             label="Preview Resolution"
@@ -561,7 +561,7 @@ function EditorTab() {
                   ))}
                 </div>
                 <div className="text-[10px] text-text-muted text-right">
-                  {project.canvasWidth}×{project.canvasHeight}px
+                  {project.canvasWidth}횞{project.canvasHeight}px
                 </div>
               </div>
             </SettingRow>
@@ -622,7 +622,7 @@ function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onCha
   );
 }
 
-// ─── Brand Icons ─────────────────────────────────────────────────────────
+// ??? Brand Icons ?????????????????????????????????????????????????????????
 const GithubIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" {...props}>
     <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
@@ -664,7 +664,7 @@ const openExternalUrl = async (url: string) => {
   window.open(url, "_blank", "noopener,noreferrer");
 };
 
-// ─── About Tab ───────────────────────────────────────────────────────────
+// ??? About Tab ???????????????????????????????????????????????????????????
 function AboutTab() {
   const [appVersion, setAppVersion] = useState<string>("...");
   const {
@@ -698,10 +698,10 @@ function AboutTab() {
     <div className="flex flex-col items-center text-center py-6 gap-4">
       <div className="w-16 h-16 flex items-center justify-center relative">
         <div className="absolute inset-0 bg-accent/20 blur-xl rounded-full"></div>
-        <img src="/clypra.svg" alt="Clypra Logo" className="w-16 h-16 object-contain relative z-10 drop-shadow-xl" />
+        <img src="/AION.svg" alt="AION Logo" className="w-16 h-16 object-contain relative z-10 drop-shadow-xl" />
       </div>
       <div>
-        <h3 className="text-lg font-bold text-text-primary">Clypra</h3>
+        <h3 className="text-lg font-bold text-text-primary">AION</h3>
         <p className="text-xs text-text-muted mt-1">Version {appVersion}</p>
       </div>
       <p className="text-xs text-text-muted max-w-70 leading-relaxed">A modern, native video editor built with Tauri, React, and FFmpeg. Designed for speed and creative freedom.</p>
@@ -730,7 +730,7 @@ function AboutTab() {
             <>
               {updateStatus === "idle" && (
                 <>
-                  <p className="text-[11px] text-text-muted mb-2">Keep Clypra running at peak performance.</p>
+                  <p className="text-[11px] text-text-muted mb-2">Keep AION running at peak performance.</p>
                   <button onClick={handleCheckUpdate} className="flex items-center gap-1.5 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-text-primary rounded-xl text-xs font-semibold cursor-pointer shadow-sm transition-all duration-200 active:scale-95">
                     <RefreshCw className="w-3.5 h-3.5" />
                     Check for Updates
@@ -752,7 +752,7 @@ function AboutTab() {
                   <div className="w-8 h-8 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center">
                     <Check className="w-4 h-4 text-green-400" />
                   </div>
-                  <p className="text-xs text-green-400 font-medium">Clypra is up to date</p>
+                  <p className="text-xs text-green-400 font-medium">AION is up to date</p>
                   <p className="text-[10px] text-text-muted">You are currently running the latest version.</p>
                   <button onClick={handleCheckUpdate} className="mt-2 text-[10px] text-text-muted hover:text-text-primary transition-colors hover:underline cursor-pointer">
                     Check again
@@ -797,7 +797,7 @@ function AboutTab() {
               {updateStatus === "downloaded" && updateInfo && (
                 <div className="flex flex-col items-center gap-3 w-full py-1">
                   <p className="text-xs text-text-primary font-semibold">Update downloaded</p>
-                  <p className="text-[10px] text-text-muted text-center">Clypra will save your project, close the active session, and restart only when you choose to apply it.</p>
+                  <p className="text-[10px] text-text-muted text-center">AION will save your project, close the active session, and restart only when you choose to apply it.</p>
                   <div className="flex gap-2 w-full">
                     <button onClick={() => void applyUpdate()} className="flex-1 py-2 bg-linear-to-r from-accent to-violet-500 hover:from-accent-hover hover:to-violet-600 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all duration-200 active:scale-[0.98]">
                       Restart and update
@@ -838,9 +838,9 @@ function AboutTab() {
       <div className="w-full max-w-85 bg-linear-to-b from-white/4 to-white/1 border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4 shadow-xl backdrop-blur-md">
         <div className="flex items-center gap-2 w-full justify-between pb-3 border-b border-white/5">
           <span className="text-xs font-semibold text-text-primary tracking-wide uppercase">Support the Project</span>
-          <span className="text-[10px] text-text-muted">Free &amp; open-source ♥</span>
+          <span className="text-[10px] text-text-muted">Free &amp; open-source ??/span>
         </div>
-        <p className="text-[11px] text-text-muted text-center leading-relaxed">Clypra is built with love and released for free. If it saves you time, consider supporting its development.</p>
+        <p className="text-[11px] text-text-muted text-center leading-relaxed">AION is built with love and released for free. If it saves you time, consider supporting its development.</p>
         <div className="flex flex-col gap-2.5 w-full">
           {/* GitHub Sponsors */}
           <button onClick={() => openExternalUrl("https://github.com/sponsors/AIEraDev")} className="group flex items-center gap-3 w-full px-4 py-3 rounded-xl text-white text-xs font-semibold cursor-pointer transition-all duration-200 active:scale-[0.98] shadow-md" style={{ background: "linear-gradient(135deg, #238636 0%, #1a6e2b 100%)" }}>
@@ -864,7 +864,7 @@ function AboutTab() {
       </div>
 
       <div className="flex items-center gap-4 mt-2">
-        <button onClick={() => openExternalUrl("https://github.com/AIEraDev/clypra")} className="text-xs font-medium text-text-muted hover:text-accent transition-colors flex items-center gap-1.5">
+        <button onClick={() => openExternalUrl("https://github.com/AIEraDev/AION")} className="text-xs font-medium text-text-muted hover:text-accent transition-colors flex items-center gap-1.5">
           <GithubIcon className="w-3.5 h-3.5" />
           GitHub
         </button>
@@ -877,13 +877,13 @@ function AboutTab() {
       <div className="flex items-center justify-between w-full text-[10px] text-text-muted/60 mt-4 border-t border-white/5 pt-4">
         <div className="flex gap-4">
           <span>Tauri 2.x</span>
-          <span>•</span>
+          <span>??/span>
           <span>React 19</span>
-          <span>•</span>
+          <span>??/span>
           <span>FFmpeg (GPL)</span>
         </div>
         <button
-          onClick={() => openExternalUrl("https://github.com/AIEraDev/clypra/blob/main/THIRD_PARTY_LICENSES.md")}
+          onClick={() => openExternalUrl("https://github.com/AIEraDev/AION/blob/main/THIRD_PARTY_LICENSES.md")}
           className="hover:text-accent underline transition-colors cursor-pointer"
         >
           Third-Party Licenses
@@ -893,7 +893,7 @@ function AboutTab() {
   );
 }
 
-// ─── Main Settings Modal ─────────────────────────────────────────────────
+// ??? Main Settings Modal ?????????????????????????????????????????????????
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState<Tab>("appearance");
 
@@ -950,3 +950,4 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     </Modal>
   );
 };
+

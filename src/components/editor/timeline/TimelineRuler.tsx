@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useRef,
   useEffect,
   useState,
@@ -33,7 +33,7 @@ interface TimelineRulerProps {
  *   - Click pin to open popover (rename, recolor, delete)
  */
 
-// ── Interval table ──────────────────────────────────────────────────────
+// ?? Interval table ??????????????????????????????????????????????????????
 const INTERVAL_TABLE: [number, number][] = [
   [60, 6],
   [30, 6],
@@ -69,7 +69,7 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-// ── Marker Pin ──────────────────────────────────────────────────────────
+// ?? Marker Pin ??????????????????????????????????????????????????????????
 
 interface MarkerPinProps {
   marker: TimelineMarker;
@@ -190,7 +190,7 @@ const MarkerPin: React.FC<MarkerPinProps> = ({
   );
 };
 
-// ── Marker Popover ─────────────────────────────────────────────────────
+// ?? Marker Popover ?????????????????????????????????????????????????????
 
 interface MarkerPopoverProps {
   marker: TimelineMarker;
@@ -230,7 +230,7 @@ const MarkerPopover: React.FC<MarkerPopoverProps> = ({
     }
   };
 
-  // Keep popover from overflowing the right edge — clamp to 220px card width
+  // Keep popover from overflowing the right edge ??clamp to 220px card width
   const CARD_W = 220;
   const adjustedX = Math.max(
     0,
@@ -247,9 +247,9 @@ const MarkerPopover: React.FC<MarkerPopoverProps> = ({
         left: adjustedX,
         width: CARD_W,
         zIndex: 50,
-        background: "var(--clypra-surface-panel)",
+        background: "var(--AION-surface-panel)",
         border:
-          "1px solid color-mix(in srgb, var(--clypra-text-primary) 12%, transparent)",
+          "1px solid color-mix(in srgb, var(--AION-text-primary) 12%, transparent)",
         borderRadius: 8,
         boxShadow: "var(--elev-shadow)",
         padding: "10px 12px",
@@ -285,7 +285,7 @@ const MarkerPopover: React.FC<MarkerPopoverProps> = ({
           if (e.key === "Escape") onClose();
           e.stopPropagation();
         }}
-        placeholder="Marker name…"
+        placeholder="Marker name??
         style={{
           background: "rgba(255,255,255,0.07)",
           border: "1px solid rgba(255,255,255,0.14)",
@@ -345,7 +345,7 @@ const MarkerPopover: React.FC<MarkerPopoverProps> = ({
   );
 };
 
-// ── Main component ──────────────────────────────────────────────────────
+// ?? Main component ??????????????????????????????????????????????????????
 
 export const TimelineRuler: React.FC<TimelineRulerProps> = ({
   pixelsPerSecond,
@@ -374,7 +374,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
     return () => ro.disconnect();
   }, []);
 
-  // ── Format label with an explicit hours field ─────────────────────────────
+  // ?? Format label with an explicit hours field ?????????????????????????????
   // Ruler labels stop at seconds; frame/millisecond precision belongs to
   // playback/detail displays, not the timeline scale.
   const formatLabel = useCallback(
@@ -384,7 +384,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
     [frameRate],
   );
 
-  // ── Memoized tick generation ─────────────────────────────────────────────
+  // ?? Memoized tick generation ?????????????????????????????????????????????
   const ticks = useMemo(() => {
     const validPPS =
       typeof pixelsPerSecond === "number" &&
@@ -459,7 +459,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
     startOffset,
   ]);
 
-  // ── Double-click ruler to add marker ────────────────────────────────────
+  // ?? Double-click ruler to add marker ????????????????????????????????????
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const rect = containerRef.current?.getBoundingClientRect();
@@ -471,7 +471,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
     [pixelsPerSecond, addMarker, startOffset],
   );
 
-  // ── Close popover when clicking background ────────────────────────────────
+  // ?? Close popover when clicking background ????????????????????????????????
   const handleBackgroundClick = useCallback(() => {
     setSelectedMarkerId(null);
   }, []);
@@ -490,7 +490,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
       onDoubleClick={handleDoubleClick}
       onClick={handleBackgroundClick}
     >
-      {/* ── Tick marks ── */}
+      {/* ?? Tick marks ?? */}
       {ticks.map(({ time, isMajor }) => {
         const x = timeToPixel(time, pixelsPerSecond) + startOffset;
         return (
@@ -539,7 +539,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
         );
       })}
 
-      {/* ── Marker pins ── */}
+      {/* ?? Marker pins ?? */}
       {markers.map((marker) => (
         <MarkerPin
           key={marker.id}
@@ -554,7 +554,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
         />
       ))}
 
-      {/* ── Marker popover ── */}
+      {/* ?? Marker popover ?? */}
       {selectedMarker && (
         <MarkerPopover
           key={selectedMarker.id}
@@ -571,3 +571,4 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
     </div>
   );
 };
+

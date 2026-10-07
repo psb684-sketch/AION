@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useRef,
   useEffect,
   useCallback,
@@ -328,7 +328,7 @@ export const Timeline: React.FC = () => {
     runtime.notifyZoom(pixelsPerSecond / 100);
   }, [runtime, pixelsPerSecond]);
 
-  // ── Clamp playhead to sequence bounds ──────────────────────────────────────
+  // ?? Clamp playhead to sequence bounds ??????????????????????????????????????
   useEffect(() => {
     const clock = getPlaybackClock();
     if (duration > 0 && clock.time > duration) {
@@ -401,7 +401,7 @@ export const Timeline: React.FC = () => {
   }, [isPlaying, keepProgramTimeVisible, previewMode]);
 
   // Auto-scroll during playback: viewport tracking
-  // read clock inside RAF tick — effect only re-runs on isPlaying/pps/duration change
+  // read clock inside RAF tick ??effect only re-runs on isPlaying/pps/duration change
   useEffect(() => {
     const container = containerRef.current;
 
@@ -446,7 +446,7 @@ export const Timeline: React.FC = () => {
       }
     }
 
-    // ✅ RAF loop for smooth auto-scroll (no state updates every frame)
+    // ??RAF loop for smooth auto-scroll (no state updates every frame)
     const autoScroll = () => {
       if (!isPlaying || !container) return;
 
@@ -513,7 +513,7 @@ export const Timeline: React.FC = () => {
         autoScrollRafRef.current = null;
       }
     };
-    // Audit 6.2 fix: pixelsPerSecond removed — read imperatively from pixelsPerSecondRef
+    // Audit 6.2 fix: pixelsPerSecond removed ??read imperatively from pixelsPerSecondRef
     // inside the tick so zoom changes don't restart the loop and cause a scroll gap.
   }, [isPlaying, duration, setScrollLeft, hasClips]);
 
@@ -693,7 +693,7 @@ export const Timeline: React.FC = () => {
     ],
   );
 
-  // Simple scroll handler — no cross-container sync needed
+  // Simple scroll handler ??no cross-container sync needed
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     setScrollLeft(e.currentTarget.scrollLeft);
   };
@@ -737,7 +737,7 @@ export const Timeline: React.FC = () => {
       )}
 
       <div className="flex-1 min-h-0 overflow-hidden">
-        {/* ── Single scroll container with CSS Grid ─────────────────────── */}
+        {/* ?? Single scroll container with CSS Grid ??????????????????????? */}
         <div
           ref={containerRef}
           onScroll={handleScroll}
@@ -761,7 +761,7 @@ export const Timeline: React.FC = () => {
             rowGap: 0,
           }}
         >
-          {/* ── Row 1: Header + Ruler (both sticky top) ──────────────── */}
+          {/* ?? Row 1: Header + Ruler (both sticky top) ???????????????? */}
           {hasClips && (
             <div
               className="panel-head flex items-center px-3 shrink-0"
@@ -794,7 +794,7 @@ export const Timeline: React.FC = () => {
                 height: `${TIMELINE_RULER_HEIGHT}px`,
                 width: `${contentWidth}px`,
                 borderBottom: "1px solid var(--color-timeline-track-border)",
-                borderLeft: "1px solid var(--clypra-border-default)",
+                borderLeft: "1px solid var(--AION-border-default)",
               }}
             >
               <TimelineRuler
@@ -806,7 +806,7 @@ export const Timeline: React.FC = () => {
             </div>
           )}
 
-          {/* ── Row 2+: Track labels (sticky left) + Track clips ─────── */}
+          {/* ?? Row 2+: Track labels (sticky left) + Track clips ??????? */}
           {!hasClips ? (
             <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
               <div className="relative flex h-full items-center px-8 py-8 md:px-16">
@@ -884,22 +884,22 @@ export const Timeline: React.FC = () => {
 
                   return (
                     <React.Fragment key={track.id}>
-                      {/* LEFT: Track label — sticky left, scrolls vertically with clips */}
+                      {/* LEFT: Track label ??sticky left, scrolls vertically with clips */}
                       <TrackLabel
                         track={visualTrack}
                         visualSpec={visualSpec}
                         onContextMenu={handleTrackLabelContextMenu}
                       />
 
-                      {/* RIGHT: Track clips — scrolls both directions */}
+                      {/* RIGHT: Track clips ??scrolls both directions */}
                       <div
                         className="relative mb-0"
                         style={{
                           width: `${contentWidth}px`,
                           height: `${visualTrack.height}px`,
                           paddingLeft: `${TIMELINE_CLIP_START_OFFSET_PX}px`,
-                          background: "var(--clypra-surface-workspace)",
-                          borderLeft: "1px solid var(--clypra-border-default)",
+                          background: "var(--AION-surface-workspace)",
+                          borderLeft: "1px solid var(--AION-border-default)",
                         }}
                       >
                         <Track
@@ -1065,3 +1065,4 @@ export const Timeline: React.FC = () => {
     </div>
   );
 };
+

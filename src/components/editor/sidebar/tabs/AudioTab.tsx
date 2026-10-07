@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle,
@@ -132,7 +132,7 @@ export const AudioTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
               No approved audio yet
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
-              Audio published from Clypra Studio will appear here after API
+              Audio published from AION Studio will appear here after API
               cache refresh.
             </p>
           </div>
@@ -270,8 +270,8 @@ const AudioItem: React.FC<AudioItemProps> = ({ item, onAddToTimeline }) => {
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-linear-to-br from-accent/20 to-accent/10">
             <img
-              src="/clypra.svg"
-              alt="Clypra"
+              src="/AION.svg"
+              alt="AION"
               className="w-8 h-8 object-contain opacity-60"
             />
           </div>
@@ -299,7 +299,7 @@ const AudioItem: React.FC<AudioItemProps> = ({ item, onAddToTimeline }) => {
         </h4>
         <div className="flex items-center gap-1.5 text-xs text-text-muted">
           <span className="truncate">{item.author}</span>
-          <span>•</span>
+          <span>??/span>
           <span className="shrink-0">{formatDuration(item.duration)}</span>
         </div>
         {/* Status Indicators */}
@@ -345,3 +345,4 @@ const AudioItem: React.FC<AudioItemProps> = ({ item, onAddToTimeline }) => {
     </div>
   );
 };
+

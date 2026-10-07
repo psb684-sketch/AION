@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { TransformClipCommand } from "@/core/history/commands/TransformCommand";
@@ -211,7 +211,7 @@ describe("AudioEnvelopeEditor volume interaction", () => {
 
     const fadePaths = Array.from(document.querySelectorAll("svg path"));
     expect(fadePaths.some((path) => path.getAttribute("d")?.includes(" C "))).toBe(true);
-    expect(fadePaths.some((path) => path.getAttribute("fill") === "var(--clypra-clip-envelope-fill)")).toBe(true);
+    expect(fadePaths.some((path) => path.getAttribute("fill") === "var(--AION-clip-envelope-fill)")).toBe(true);
 
     cleanup();
     render(<AudioEnvelopeEditor clip={createClip()} clipWidthPx={400} pixelsPerSecond={40} />);
@@ -270,3 +270,4 @@ describe("AudioEnvelopeEditor volume interaction", () => {
     expect(mocks.updateClip).toHaveBeenCalledWith("clip-1", expect.objectContaining({ fadeOut: 3 }));
   });
 });
+

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CameraRecordingModal
  *
  * Front camera only recording modal with live aspect-ratio preview framing
@@ -9,7 +9,7 @@
  * - Single getUserMedia call shared by video, mic VU metering, and recorder
  *   (eliminates macOS AVCaptureSession contention).
  * - Live aspect-ratio container with `object-cover` and selfie mirroring (`scale-x-[-1]`).
- * - MediaRecorder captures raw video stream; on stop, Clypra's Rust backend
+ * - MediaRecorder captures raw video stream; on stop, AION's Rust backend
  *   (`process_camera_recording`) center-crops to target aspect ratio and exports clean MP4.
  */
 
@@ -33,13 +33,13 @@ import {
   type AudioDevice,
 } from "@/services/cameraRecordService";
 
-// ── Props ─────────────────────────────────────────────────────────────────────
+// ?? Props ?????????????????????????????????????????????????????????????????????
 
 interface CameraRecordingModalProps {
   onRecordingComplete: (filePath: string, aspectRatio: CameraAspectRatio) => void;
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ?? Constants ?????????????????????????????????????????????????????????????????
 
 const RATIO_OPTIONS: {
   value: CameraAspectRatio;
@@ -60,7 +60,7 @@ function formatTime(secs: number): string {
   return `${m}:${s}`;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ?? Component ?????????????????????????????????????????????????????????????????
 
 export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
   onRecordingComplete,
@@ -105,11 +105,11 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
 
   const service = CameraRecordService.getInstance();
 
-  // ── Stream binding helper (direct hardware-accelerated WebKit video) ───────
+  // ?? Stream binding helper (direct hardware-accelerated WebKit video) ???????
 
   const attachStreamToVideo = useCallback((stream: MediaStream) => {
     const vid = videoRef.current;
-    console.log("%c🎥 [CameraDebug] attachStreamToVideo called.", "color: #e879f9; font-weight: bold;", {
+    console.log("%c?렏 [CameraDebug] attachStreamToVideo called.", "color: #e879f9; font-weight: bold;", {
       hasVidRef: !!vid,
       streamId: stream.id,
       streamActive: stream.active,
@@ -118,20 +118,20 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     });
 
     if (!vid) {
-      console.error("❌ [CameraDebug] attachStreamToVideo: videoRef.current is NULL!");
+      console.error("??[CameraDebug] attachStreamToVideo: videoRef.current is NULL!");
       return;
     }
 
     const videoTracks = stream.getVideoTracks();
     if (videoTracks.length === 0) {
-      console.error("❌ [CameraDebug] No video tracks in stream!");
+      console.error("??[CameraDebug] No video tracks in stream!");
       return;
     }
 
     // Inspect layout geometry
     const rect = vid.getBoundingClientRect();
     const computed = window.getComputedStyle(vid);
-    console.log("%c🎥 [CameraDebug] <video> DOM Geometry & Computed Style:", "color: #38bdf8;", {
+    console.log("%c?렏 [CameraDebug] <video> DOM Geometry & Computed Style:", "color: #38bdf8;", {
       clientWidth: vid.clientWidth,
       clientHeight: vid.clientHeight,
       offsetWidth: vid.offsetWidth,
@@ -171,7 +171,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
       vid.addEventListener(
         evtName,
         () => {
-          console.log(`%c🎥 [CameraDebug] <video> EVENT: '${evtName}'`, "color: #60a5fa; font-weight: bold;", {
+          console.log(`%c?렏 [CameraDebug] <video> EVENT: '${evtName}'`, "color: #60a5fa; font-weight: bold;", {
             videoWidth: vid.videoWidth,
             videoHeight: vid.videoHeight,
             readyState: vid.readyState,
@@ -221,15 +221,15 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
                 setSensorCoveredWarning(false);
               }
               pixelAnalysis = isPureBlack
-                ? `⚠️ PURE BLACK (RGB: 0,0,0) [count: ${consecutiveBlackCount}] — Hardware/OS is feeding black frames`
-                : `✅ LIGHT DETECTED! Avg RGB(${avgR}, ${avgG}, ${avgB})`;
+                ? `?좑툘 PURE BLACK (RGB: 0,0,0) [count: ${consecutiveBlackCount}] ??Hardware/OS is feeding black frames`
+                : `??LIGHT DETECTED! Avg RGB(${avgR}, ${avgG}, ${avgB})`;
             }
           }
         } catch (e: any) {
           pixelAnalysis = `Probe failed: ${e?.message}`;
         }
 
-        console.log(`%c🎥 [CameraDebug] Frame update #${timeTick}:`, "color: #34d399;", {
+        console.log(`%c?렏 [CameraDebug] Frame update #${timeTick}:`, "color: #34d399;", {
           currentTime: vid.currentTime.toFixed(2),
           videoWidth: vid.videoWidth,
           videoHeight: vid.videoHeight,
@@ -239,7 +239,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
       }
     };
 
-    console.log("%c🎥 [CameraDebug] Setting vid.srcObject = video-only stream", "color: #f59e0b;");
+    console.log("%c?렏 [CameraDebug] Setting vid.srcObject = video-only stream", "color: #f59e0b;");
     // Only pass video tracks to the <video> element.
     // In WebKit (macOS), assigning a MediaStream with audio tracks to a muted <video> element
     // causes WebKit's audio unit to terminate the capture track with
@@ -249,7 +249,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
 
     vid.play()
       .then(() => {
-        console.log("%c✅ [CameraDebug] vid.play() PROMISE RESOLVED SUCCESSFULLY!", "color: #22c55e; font-weight: bold;", {
+        console.log("%c??[CameraDebug] vid.play() PROMISE RESOLVED SUCCESSFULLY!", "color: #22c55e; font-weight: bold;", {
           videoWidth: vid.videoWidth,
           videoHeight: vid.videoHeight,
           readyState: vid.readyState,
@@ -259,14 +259,14 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
         setPreviewState("live");
       })
       .catch((err) => {
-        console.error("%c❌ [CameraDebug] vid.play() PROMISE REJECTED:", "color: #ef4444; font-weight: bold;", err);
+        console.error("%c??[CameraDebug] vid.play() PROMISE REJECTED:", "color: #ef4444; font-weight: bold;", err);
       });
   }, [setPreviewState]);
 
-  // ── Teardown helper ─────────────────────────────────────────────────────────
+  // ?? Teardown helper ?????????????????????????????????????????????????????????
 
   const teardown = useCallback(() => {
-    console.log("%c🎥 [CameraDebug] teardown called.", "color: #94a3b8;");
+    console.log("%c?렏 [CameraDebug] teardown called.", "color: #94a3b8;");
     setSensorCoveredWarning(false);
     cancelAnimationFrame(micAnimRef.current);
     micAudioCtxRef.current?.close().catch?.(() => {});
@@ -288,7 +288,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     setPreviewState("idle");
   }, [setPreviewState]);
 
-  // ── Stop mic meter ──────────────────────────────────────────────────────────
+  // ?? Stop mic meter ??????????????????????????????????????????????????????????
 
   const stopMicMeter = useCallback(() => {
     cancelAnimationFrame(micAnimRef.current);
@@ -299,7 +299,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     }
   }, []);
 
-  // ── Start mic VU meter from an active stream ────────────────────────────────
+  // ?? Start mic VU meter from an active stream ????????????????????????????????
 
   const startMicMeter = useCallback((stream: MediaStream) => {
     stopMicMeter();
@@ -333,12 +333,12 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
   const isAcquiringStreamRef = useRef<boolean>(false);
   const hasInitializedModalRef = useRef<boolean>(false);
 
-  // ── Start camera preview ────────────────────────────────────────────────────
+  // ?? Start camera preview ????????????????????????????????????????????????????
 
   const startCameraPreview = useCallback(
     async (targetCamId?: string | null, targetMicId?: string | null) => {
       if (isAcquiringStreamRef.current) {
-        console.warn("🎥 [CameraDebug] startCameraPreview already in progress, ignoring concurrent call.");
+        console.warn("?렏 [CameraDebug] startCameraPreview already in progress, ignoring concurrent call.");
         return;
       }
       isAcquiringStreamRef.current = true;
@@ -355,7 +355,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           if (preferredMic && preferredMic.deviceId && preferredMic.deviceId.trim().length > 0) {
             effectiveMicId = preferredMic.deviceId;
             console.log(
-              "%c🎤 [CameraDebug] Auto-selected hardware microphone:",
+              "%c?렎 [CameraDebug] Auto-selected hardware microphone:",
               "color: #a855f7; font-weight: bold;",
               preferredMic,
             );
@@ -367,7 +367,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
 
       const validMicId = effectiveMicId && effectiveMicId.trim().length > 0 ? effectiveMicId : null;
 
-      console.log("%c🎥 [CameraDebug] startCameraPreview invoked (LOCKED).", "color: #38bdf8; font-weight: bold;", {
+      console.log("%c?렏 [CameraDebug] startCameraPreview invoked (LOCKED).", "color: #38bdf8; font-weight: bold;", {
         targetCamId,
         targetMicId,
         effectiveCamId,
@@ -392,7 +392,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           ? { deviceId: { exact: targetCamId }, width: { ideal: 1280 }, height: { ideal: 720 } }
           : { width: { ideal: 1280 }, height: { ideal: 720 } };
 
-        // Build audio constraints — request audio in the SAME getUserMedia call so WebKit
+        // Build audio constraints ??request audio in the SAME getUserMedia call so WebKit
         // grants permission visibility for audioinput devices before enumerateDevices().
         const audioConstraints: boolean | MediaTrackConstraints = effectiveMicEnabled
           ? validMicId
@@ -423,7 +423,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           }
         }
 
-        console.log("%c✅ [CameraDebug] Video getUserMedia SUCCEEDED!", "color: #22c55e; font-weight: bold;", {
+        console.log("%c??[CameraDebug] Video getUserMedia SUCCEEDED!", "color: #22c55e; font-weight: bold;", {
           streamId: stream.id,
           active: stream.active,
           videoTracks: stream.getVideoTracks().length,
@@ -431,7 +431,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
         });
 
         stream.getVideoTracks().forEach((track, i) => {
-          console.log(`%c🎥 [CameraDebug] VideoTrack[${i}]:`, "color: #38bdf8;", {
+          console.log(`%c?렏 [CameraDebug] VideoTrack[${i}]:`, "color: #38bdf8;", {
             label: track.label,
             id: track.id,
             enabled: track.enabled,
@@ -440,13 +440,13 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
             settings: track.getSettings(),
             constraints: track.getConstraints(),
           });
-          track.onmute = () => console.warn(`⚠️ [CameraDebug] VideoTrack[${i}] MUTED by system!`);
-          track.onunmute = () => console.log(`✅ [CameraDebug] VideoTrack[${i}] UNMUTED by system.`);
-          track.onended = () => console.warn(`❌ [CameraDebug] VideoTrack[${i}] ENDED!`);
+          track.onmute = () => console.warn(`?좑툘 [CameraDebug] VideoTrack[${i}] MUTED by system!`);
+          track.onunmute = () => console.log(`??[CameraDebug] VideoTrack[${i}] UNMUTED by system.`);
+          track.onended = () => console.warn(`??[CameraDebug] VideoTrack[${i}] ENDED!`);
         });
 
         stream.getAudioTracks().forEach((track, i) => {
-          console.log(`%c🎤 [CameraDebug] AudioTrack[${i}]:`, "color: #a855f7;", {
+          console.log(`%c?렎 [CameraDebug] AudioTrack[${i}]:`, "color: #a855f7;", {
             label: track.label,
             id: track.id,
             enabled: track.enabled,
@@ -455,7 +455,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           });
           track.onended = () => {
             if (streamRef.current?.getAudioTracks().includes(track)) {
-              console.warn(`❌ [CameraDebug] AudioTrack[${i}] ended unexpectedly!`);
+              console.warn(`??[CameraDebug] AudioTrack[${i}] ended unexpectedly!`);
             }
           };
         });
@@ -466,7 +466,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           service.enumerateCameras(),
           service.enumerateMics(),
         ]);
-        console.log("%c🎥 [CameraDebug] Enumerated devices:", "color: #94a3b8;", {
+        console.log("%c?렏 [CameraDebug] Enumerated devices:", "color: #94a3b8;", {
           cameras: cams.map((c) => ({ id: c.deviceId, label: c.label })),
           mics: mics.map((m) => ({ id: m.deviceId, label: m.label })),
         });
@@ -490,7 +490,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
             mics[0];
 
           if (chosenMic) {
-            console.log("%c🎤 [CameraDebug] Binding hardware mic (fallback):", "color: #f59e0b; font-weight: bold;", chosenMic);
+            console.log("%c?렎 [CameraDebug] Binding hardware mic (fallback):", "color: #f59e0b; font-weight: bold;", chosenMic);
             try {
               const audioStream = await navigator.mediaDevices.getUserMedia({
                 audio: { deviceId: { exact: chosenMic.deviceId } },
@@ -501,7 +501,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
                 setSelectedMicDeviceId(chosenMic.deviceId);
               }
             } catch (micErr) {
-              console.warn("⚠️ [CameraDebug] Fallback mic binding failed:", micErr);
+              console.warn("?좑툘 [CameraDebug] Fallback mic binding failed:", micErr);
             }
           }
         } else if (effectiveMicEnabled && stream.getAudioTracks().length > 0) {
@@ -511,7 +511,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           const isVirtual = /quicktime|blackhole|loopback|virtual/i.test(audioTrack.label);
           const hardwareMic = mics.find((m) => /macbook|built-in|internal/i.test(m.label));
           if (!validMicId && isVirtual && hardwareMic) {
-            console.log("🎤 [CameraDebug] Switching from virtual sink to hardware mic:", hardwareMic);
+            console.log("?렎 [CameraDebug] Switching from virtual sink to hardware mic:", hardwareMic);
             try {
               const audioStream = await navigator.mediaDevices.getUserMedia({
                 audio: { deviceId: { exact: hardwareMic.deviceId } },
@@ -533,7 +533,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           if (audioDeviceId) {
             setSelectedMicDeviceId(audioDeviceId);
           }
-          console.log("%c✅ [CameraDebug] Audio track ready:", "color: #22c55e;", {
+          console.log("%c??[CameraDebug] Audio track ready:", "color: #22c55e;", {
             label: audioTrack.label,
             id: audioTrack.id,
             deviceId: audioDeviceId,
@@ -552,11 +552,11 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
 
         setPreviewState("live");
       } catch (err: any) {
-        console.error("❌ [CameraModal] startCameraPreview failed:", err);
+        console.error("??[CameraModal] startCameraPreview failed:", err);
         const msg =
           typeof err === "string"
             ? err
-            : err?.message || "Camera access failed. Check macOS System Settings → Privacy & Security.";
+            : err?.message || "Camera access failed. Check macOS System Settings ??Privacy & Security.";
         setCameraError(msg);
         setPreviewState("error");
       } finally {
@@ -577,7 +577,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     ],
   );
 
-  // ── Permission pre-check & auto-start on modal open ─────────────────────────
+  // ?? Permission pre-check & auto-start on modal open ?????????????????????????
 
   useEffect(() => {
     if (!cameraModalOpen) {
@@ -598,12 +598,12 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
         // Log diagnostics on Rust native backend & WebKit console
         const diag = await invoke<any>("log_system_media_diagnostics");
         console.log(
-          "%c🦀 [RustDiagnostics] System Media Diagnostics:",
+          "%c?? [RustDiagnostics] System Media Diagnostics:",
           "color: #f97316; font-weight: bold;",
           diag,
         );
       } catch (diagErr) {
-        console.warn("🦀 [RustDiagnostics] log_system_media_diagnostics call:", diagErr);
+        console.warn("?? [RustDiagnostics] log_system_media_diagnostics call:", diagErr);
       }
 
       try {
@@ -612,7 +612,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           can_request: boolean;
           message: string;
         }>("check_camera_permission");
-        console.log("%c🎥 [CameraDebug] check_camera_permission result:", "color: #38bdf8; font-weight: bold;", permStatus);
+        console.log("%c?렏 [CameraDebug] check_camera_permission result:", "color: #38bdf8; font-weight: bold;", permStatus);
 
         if (cancelled) return;
 
@@ -622,7 +622,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           return;
         }
       } catch (permErr) {
-        console.warn("🎥 [CameraDebug] check_camera_permission error/fallback:", permErr);
+        console.warn("?렏 [CameraDebug] check_camera_permission error/fallback:", permErr);
       }
 
       if (!cancelled) {
@@ -635,7 +635,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     };
   }, [cameraModalOpen, teardown, startCameraPreview, setCameraError, setPreviewState]);
 
-  // ── Recording timer ─────────────────────────────────────────────────────────
+  // ?? Recording timer ?????????????????????????????????????????????????????????
 
   useEffect(() => {
     if (!isRecording) {
@@ -654,7 +654,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     };
   }, [isRecording, setRecordingSeconds]);
 
-  // ── Switch Camera ───────────────────────────────────────────────────────────
+  // ?? Switch Camera ???????????????????????????????????????????????????????????
 
   const handleSwitchCamera = useCallback(
     async (deviceId: string) => {
@@ -676,7 +676,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     }
   }, [availableCameras, selectedCameraDeviceId, handleSwitchCamera]);
 
-  // ── Mic Toggle ──────────────────────────────────────────────────────────────
+  // ?? Mic Toggle ??????????????????????????????????????????????????????????????
 
   const handleToggleMic = useCallback(() => {
     const nextState = !micEnabled;
@@ -705,7 +705,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     selectedMicDeviceId,
   ]);
 
-  // ── Record / Stop ───────────────────────────────────────────────────────────
+  // ?? Record / Stop ???????????????????????????????????????????????????????????
 
   const handleStartRecording = useCallback(async () => {
     if (previewState !== "live" || !streamRef.current) return;
@@ -768,7 +768,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     setCameraError,
   ]);
 
-  // ── Close ───────────────────────────────────────────────────────────────────
+  // ?? Close ???????????????????????????????????????????????????????????????????
 
   const handleClose = useCallback(() => {
     if (isRecording) return;
@@ -806,7 +806,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
       )}
 
       <div className="flex flex-col items-center gap-5 w-full max-w-130 px-4">
-        {/* ── Aspect ratio selector ─────────────────────────────────────── */}
+        {/* ?? Aspect ratio selector ??????????????????????????????????????? */}
         {!isRecording && (
           <div className="flex items-center gap-2">
             {RATIO_OPTIONS.map((opt) => (
@@ -825,7 +825,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           </div>
         )}
 
-        {/* ── Viewfinder Container (Smoothly framed to selected aspect ratio) ── */}
+        {/* ?? Viewfinder Container (Smoothly framed to selected aspect ratio) ?? */}
         <div
           className="relative overflow-hidden rounded-2xl bg-black border border-white/10 shadow-2xl transition-[aspect-ratio] duration-300"
           style={{
@@ -844,13 +844,13 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
               muted
               onLoadedMetadata={(e) => {
                 const vid = e.currentTarget;
-                console.log("%c🎥 [CameraDebug] onLoadedMetadata event on <video>:", "color: #38bdf8; font-weight: bold;", {
+                console.log("%c?렏 [CameraDebug] onLoadedMetadata event on <video>:", "color: #38bdf8; font-weight: bold;", {
                   videoWidth: vid.videoWidth,
                   videoHeight: vid.videoHeight,
                   readyState: vid.readyState,
                 });
                 vid.play().catch((err) => {
-                  console.warn("🎥 [CameraDebug] onLoadedMetadata play() failed:", err);
+                  console.warn("?렏 [CameraDebug] onLoadedMetadata play() failed:", err);
                 });
                 setPreviewState("live");
               }}
@@ -865,8 +865,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
                 <>
                   <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   <span className="text-white/70 text-sm">
-                    Starting camera…
-                  </span>
+                    Starting camera??                  </span>
                 </>
               ) : previewState === "error" ? (
                 <>
@@ -881,8 +880,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
                       }}
                       className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-white text-xs font-semibold transition-colors cursor-pointer"
                     >
-                      Open System Settings →
-                    </button>
+                      Open System Settings ??                    </button>
                     <button
                       onClick={() => startCameraPreview()}
                       className="text-white/50 hover:text-white text-xs underline cursor-pointer mt-1"
@@ -927,12 +925,12 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           {/* Sensor Covered Warning Banner */}
           {sensorCoveredWarning && isLive && !isRecording && (
             <div className="absolute bottom-4 left-3 right-3 z-20 px-3 py-2 rounded-xl bg-amber-500/90 text-white text-xs text-center backdrop-blur-md shadow-xl border border-amber-400/50 flex items-center justify-center gap-2 animate-in fade-in">
-              <span>⚠️ Camera sensor is receiving no light. Please check if your MacBook webcam cover / privacy slider is closed.</span>
+              <span>?좑툘 Camera sensor is receiving no light. Please check if your MacBook webcam cover / privacy slider is closed.</span>
             </div>
           )}
         </div>
 
-        {/* ── Controls Row ──────────────────────────────────────────────── */}
+        {/* ?? Controls Row ???????????????????????????????????????????????? */}
         <div className="flex items-center gap-5">
           {/* Mic toggle */}
           {!isRecording && (
@@ -990,7 +988,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           )}
         </div>
 
-        {/* ── Mic level bar ─────────────────────────────────────────────── */}
+        {/* ?? Mic level bar ??????????????????????????????????????????????? */}
         {micEnabled && !isRecording && isLive && (
           <div className="w-full max-w-xs h-1 bg-white/10 rounded-full overflow-hidden">
             <div
@@ -1001,7 +999,7 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
           </div>
         )}
 
-        {/* ── Device pickers ────────────────────────────────────────────── */}
+        {/* ?? Device pickers ?????????????????????????????????????????????? */}
         {!isRecording && isLive && (
           <div className="flex items-center gap-3 text-xs text-white/50">
             {/* Camera picker */}
@@ -1099,3 +1097,4 @@ export const CameraRecordingModal: React.FC<CameraRecordingModalProps> = ({
     </div>
   );
 };
+
