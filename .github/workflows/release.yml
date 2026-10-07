@@ -17,11 +17,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -33,10 +28,10 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
+        run: npm install --legacy-peer-deps --ignore-scripts
 
       - name: Ensure sidecars
-        run: pnpm run ensure:sidecars
+        run: npm run ensure:sidecars
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -48,4 +43,4 @@ jobs:
           releaseBody: '새로운 AION 버전이 출시되었습니다! 아래에서 설치 파일을 다운로드하세요.'
           releaseDraft: false
           prerelease: false
-          runnerArgs: "pnpm run tauri"
+          runnerArgs: "npm run tauri"
